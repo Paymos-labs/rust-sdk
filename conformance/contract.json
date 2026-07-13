@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "base_url": "https://api.paymos.io",
+  "user_agent_prefix": "paymos-",
+  "request_signing": {
+    "algorithm": "HMAC-SHA256",
+    "signature_encoding": "base64",
+    "timestamp_header": "X-Request-Timestamp",
+    "authorization_format": "HMAC-SHA256 {api_key}:{signature}",
+    "canonical_format": "{timestamp}\\n{uppercase_method}\\n{path}\\n{query_with_optional_leading_question_mark}\\n{sha256_hex_body_or_empty}"
+  },
+  "query": {
+    "encoding": "RFC3986",
+    "sort_keys": true,
+    "sort_repeated_values": true,
+    "include_leading_question_mark_in_signature": true
+  },
+  "retry": {
+    "default_max_retries": 2,
+    "default_base_delay_ms": 150,
+    "retry_after": true,
+    "transport_errors": ["GET", "HEAD", "OPTIONS"],
+    "http_5xx": ["GET", "HEAD", "OPTIONS"],
+    "http_429": ["GET", "HEAD", "OPTIONS", "POST"]
+  },
+  "pagination": {
+    "default_max_pages": 100,
+    "next_cursor_field": "next_cursor",
+    "reject_repeated_cursor": true
+  },
+  "errors": {
+    "400": "validation",
+    "401": "authentication",
+    "403": "authentication",
+    "404": "not_found",
+    "409": "conflict",
+    "410": "gone",
+    "429": "rate_limit",
+    "500": "server",
+    "503": "unavailable"
+  },
+  "resources": {
+    "system": [
+      { "method": "GET", "path": "/v1/time", "operation": "time" }
+    ],
+    "invoices": [
+      { "method": "POST", "path": "/v1/invoices", "operation": "create" },
+      { "method": "GET", "path": "/v1/invoices/{id}", "operation": "get" },
+      { "method": "GET", "path": "/v1/invoices", "operation": "list" },
+      { "method": "POST", "path": "/v1/invoices/{id}/cancel", "operation": "cancel" },
+      { "method": "POST", "path": "/v1/invoices/{id}/confirm-payment", "operation": "confirm_payment" },
+      { "method": "POST", "path": "/v1/sandbox/invoices/{id}/simulate-payment", "operation": "simulate_payment" }
+    ],
+    "withdrawals": [
+      { "method": "POST", "path": "/v1/withdrawals", "operation": "create" },
+      { "method": "GET", "path": "/v1/withdrawals/{id}", "operation": "get" },
+      { "method": "GET", "path": "/v1/withdrawals", "operation": "list" },
+      { "method": "POST", "path": "/v1/withdrawals/{id}/cancel", "operation": "cancel" },
+      { "method": "POST", "path": "/v1/sandbox/withdrawals/{id}/simulate-completion", "operation": "simulate_completion" }
+    ],
+    "balances": [
+      { "method": "GET", "path": "/v1/balances", "operation": "get" }
+    ]
+  },
+  "vectors": {
+    "post_signing": {
+      "api_key": "pk_test_key",
+      "api_secret": "sk_test_secret",
+      "timestamp": "1700000000",
+      "method": "POST",
+      "path": "/v1/invoices",
+      "query": "",
+      "body": "{\"amount\":\"10.00\"}",
+      "body_sha256": "e9eb495accbce2a0e95bbe079b9f9e42ccae20371c1516e3ed3036d2a787cf53",
+      "signature": "AS+pbf8GlSGee9Oh5XhpasBpXB488AGEoqjDMx+dwak=",
+      "authorization": "HMAC-SHA256 pk_test_key:AS+pbf8GlSGee9Oh5XhpasBpXB488AGEoqjDMx+dwak="
+    },
+    "get_query_signing": {
+      "api_key": "pk_test_key",
+      "api_secret": "sk_test_secret",
+      "timestamp": "1700000000",
+      "method": "GET",
+      "path": "/v1/invoices",
+      "query": "?limit=50&project_id=prj%2Fa&status=paid&status=paid_over",
+      "body": "",
+      "signature": "O8M5GGSzzJAgj5w1jDViIWS4njJvohvnZi7+twuG+e0="
+    },
+    "webhook": {
+      "secret": "whsec_test_secret",
+      "timestamp": 1700000000,
+      "now": 1700000000,
+      "tolerance_seconds": 300,
+      "raw_body": "{\"event_id\":\"evt_123\",\"event_type\":\"invoice.paid\",\"version\":1,\"occurred_at\":1700000000,\"data\":{\"invoice_id\":\"inv_123\"}}",
+      "signature": "8f62822925c2d12af1b822edcc1e9392ce064c20d003cbbc11f131485348005b",
+      "header": "t=1700000000,v1=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,v1=8f62822925c2d12af1b822edcc1e9392ce064c20d003cbbc11f131485348005b"
+    }
+  }
+}
