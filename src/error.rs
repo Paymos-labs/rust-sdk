@@ -104,10 +104,11 @@ impl std::error::Error for ApiError {}
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct ProblemDetails {
     #[serde(rename = "type")]
-    pub problem_type: Option<String>,
-    pub title: Option<String>,
-    pub detail: Option<String>,
-    pub code: Option<String>,
+    pub problem_type: String,
+    pub title: String,
+    pub status: u16,
+    pub detail: String,
+    pub code: String,
     pub field: Option<String>,
     #[serde(default)]
     pub errors: Vec<ProblemError>,

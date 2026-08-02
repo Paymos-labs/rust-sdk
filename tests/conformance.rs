@@ -335,7 +335,7 @@ async fn retries_429_post_but_not_503_post() {
         Response {
             status: 429,
             headers: vec![("Retry-After", "0")],
-            body: r#"{"detail":"slow down","code":"rate_limited"}"#,
+            body: r#"{"type":"about:blank","title":"Too Many Requests","status":429,"detail":"slow down","code":"rate_limited"}"#,
         },
         Response::ok(INVOICE),
     ])
@@ -352,7 +352,7 @@ async fn retries_429_post_but_not_503_post() {
     let no_retry_server = TestServer::start(vec![Response {
         status: 503,
         headers: Vec::new(),
-        body: r#"{"detail":"retry later","code":"unavailable"}"#,
+        body: r#"{"type":"about:blank","title":"Service Unavailable","status":503,"detail":"retry later","code":"unavailable"}"#,
     }])
     .await;
     let client = PaymosClient::builder("pk", "sk")
@@ -370,6 +370,47 @@ async fn retries_429_post_but_not_503_post() {
         other => panic!("expected API error, got {other:?}"),
     }
     assert_eq!(no_retry_server.paths().await.len(), 1);
+}
+
+#[tokio::test]
+async fn problem_details_uses_top_level_code_and_rejects_status_mismatch() {
+    const MULTI: &str = r#"{"type":"about:blank","title":"Bad Request","status":400,"detail":"Validation failed.","code":"validation_failed","errors":[{"code":"field_required","field":"address","message":"Required."}]}"#;
+    const MISMATCHED: &str = r#"{"type":"about:blank","title":"Bad Request","status":401,"detail":"Mismatch.","code":"unauthorized"}"#;
+    let server = TestServer::start(vec![Response {
+        status: 400,
+        headers: Vec::new(),
+        body: MULTI,
+    }])
+    .await;
+    let client = PaymosClient::builder("pk", "sk")
+        .base_url(&server.base_url)
+        .max_retries(0)
+        .build()
+        .unwrap();
+    match client.system().time().await.unwrap_err() {
+        Error::Api(error) => {
+            assert_eq!(error.code.as_deref(), Some("validation_failed"));
+            assert_eq!(error.field, None);
+            assert_eq!(error.errors[0].code, "field_required");
+        }
+        other => panic!("expected API error, got {other:?}"),
+    }
+
+    let server = TestServer::start(vec![Response {
+        status: 400,
+        headers: Vec::new(),
+        body: MISMATCHED,
+    }])
+    .await;
+    let client = PaymosClient::builder("pk", "sk")
+        .base_url(&server.base_url)
+        .max_retries(0)
+        .build()
+        .unwrap();
+    match client.system().time().await.unwrap_err() {
+        Error::Api(error) => assert_eq!(error.code, None),
+        other => panic!("expected API error, got {other:?}"),
+    }
 }
 
 #[tokio::test]

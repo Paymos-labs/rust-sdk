@@ -93,6 +93,30 @@
       "raw_body": "{\"event_id\":\"evt_123\",\"event_type\":\"invoice.paid\",\"version\":1,\"occurred_at\":1700000000,\"data\":{\"invoice_id\":\"inv_123\"}}",
       "signature": "8f62822925c2d12af1b822edcc1e9392ce064c20d003cbbc11f131485348005b",
       "header": "t=1700000000,v1=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,v1=8f62822925c2d12af1b822edcc1e9392ce064c20d003cbbc11f131485348005b"
+    },
+    "problem_details": {
+      "flat": {
+        "type": "about:blank",
+        "title": "Conflict",
+        "status": 409,
+        "detail": "Conflict.",
+        "code": "conflict",
+        "field": "client_request_id"
+      },
+      "multi": {
+        "type": "about:blank",
+        "title": "Bad Request",
+        "status": 400,
+        "detail": "Validation failed.",
+        "code": "validation_failed",
+        "errors": [
+          {
+            "code": "field_required",
+            "field": "address",
+            "message": "Required."
+          }
+        ]
+      }
     }
   }
 }

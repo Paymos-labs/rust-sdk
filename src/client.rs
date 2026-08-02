@@ -632,18 +632,32 @@ struct SimulationRequest {
 
 impl ApiError {
     fn from_response(status: StatusCode, headers: &HeaderMap, body: &[u8]) -> Self {
-        let problem = serde_json::from_slice::<ProblemDetails>(body).unwrap_or_default();
+        let problem = serde_json::from_slice::<ProblemDetails>(body)
+            .ok()
+            .filter(|problem| problem.status == status.as_u16());
+        let (problem_type, title, detail, code, field, errors, trace_id) = match problem {
+            Some(problem) => (
+                Some(problem.problem_type),
+                Some(problem.title),
+                Some(problem.detail),
+                Some(problem.code),
+                problem.field,
+                problem.errors,
+                problem.trace_id,
+            ),
+            None => (None, None, None, None, None, Vec::new(), None),
+        };
         Self {
             status: status.as_u16(),
             kind: ApiErrorKind::from_status(status.as_u16()),
-            problem_type: problem.problem_type,
-            title: problem.title,
-            detail: problem.detail,
-            code: problem.code,
-            field: problem.field,
-            errors: problem.errors,
+            problem_type,
+            title,
+            detail,
+            code,
+            field,
+            errors,
             retry_after: parse_retry_after(headers.get(RETRY_AFTER)),
-            trace_id: problem.trace_id,
+            trace_id,
             raw_body: String::from_utf8_lossy(body).into_owned(),
         }
     }
