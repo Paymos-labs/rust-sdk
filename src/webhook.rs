@@ -229,6 +229,46 @@ fn unix_now() -> Result<i64, WebhookError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PaymentChannelDeposit;
+
+    /// The deposit wire shape doubles as the webhook payload, so the same model the
+    /// feed decodes must survive `construct_event_at`. This is a native-TRX deposit:
+    /// it has no contract, the payer address was not attributable, and no explorer
+    /// link was minted — those keys are ABSENT from the JSON, not null, and must
+    /// stay absent after decoding.
+    #[test]
+    fn round_trips_a_confirmed_payment_channel_deposit_event() {
+        let secret = "whsec_test";
+        let timestamp: i64 = 1_700_000_000;
+        let body = r#"{"event_id":"evt_2","event_type":"payment_channel.deposit.confirmed","version":1,"occurred_at":1700000000,"data":{"id":"pcd_9","payment_channel_id":"pc_1","project_id":"prj_1","payment_channel_external_id":"customer-42","status":"confirmed","is_final":true,"is_test":false,"currency":"TRX","network":"TRC20","chain_id":728126428,"gross":"100.00","fee":"1.00","net":"99.00","applied_fee_percent":1,"customer_fee_percent":0,"tx_hash":"9a2f1c","transfer_id":"trf_1","destination_address":"TChannelAddress","block_height":60000000,"created_at":1700000000,"updated_at":1700000100,"confirmed_at":1700000100}}"#;
+
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(format!("{timestamp}.{body}").as_bytes());
+        let signature = hex::encode(mac.finalize().into_bytes());
+        let header = format!("t={timestamp},v1={signature}");
+
+        let verifier = WebhookVerifier::new(secret).unwrap();
+        let event: WebhookEvent<PaymentChannelDeposit> = verifier
+            .construct_event_at(&header, body.as_bytes(), timestamp)
+            .unwrap();
+
+        assert_eq!(event.event_type, "payment_channel.deposit.confirmed");
+
+        // Money stays a `String` all the way through — never a float. Assert the
+        // exact values, not just the type.
+        let deposit = event.data;
+        assert_eq!(deposit.gross, "100.00");
+        assert_eq!(deposit.fee, "1.00");
+        assert_eq!(deposit.net, "99.00");
+        assert!(deposit.is_final);
+
+        // Absent stays absent: no field the JSON omitted should decode to anything
+        // but `None`.
+        assert_eq!(deposit.contract_address, None);
+        assert_eq!(deposit.source_address, None);
+        assert_eq!(deposit.explorer_url, None);
+        assert_eq!(deposit.first_included_block_timestamp, None);
+    }
 
     #[test]
     fn rejects_duplicate_timestamps() {
