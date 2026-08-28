@@ -365,6 +365,278 @@ pub struct Withdrawal {
     pub cancelled_at: Option<i64>,
 }
 
+/// Input for creating a payment channel.
+///
+/// The pair `project_id` + `external_id` IS the idempotency key: repeating it
+/// returns the channel that already exists with `200` instead of creating a
+/// second one, so this is safe to call on every checkout.
+#[derive(Clone, Debug, Serialize)]
+pub struct CreatePaymentChannelRequest {
+    /// Project that owns the channel.
+    pub project_id: String,
+    /// Your own stable identifier for the payer, at most 128 characters.
+    pub external_id: String,
+}
+
+/// Payment-channel sandbox deposit simulation stage.
+///
+/// Omit it entirely to settle the deposit; sending an unknown value is rejected.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SimulateDepositStage {
+    /// Publish the deposit as seen on chain but not yet settled.
+    Confirming,
+    /// Drive the simulated deposit through a chain reorganisation.
+    Reorged,
+    /// Settle the deposit. This is the default when the stage is omitted.
+    Confirmed,
+}
+
+/// Input for the sandbox deposit simulation. Amounts stay decimal strings.
+#[derive(Clone, Debug, Serialize)]
+pub struct SimulateDepositRequest {
+    /// Dot-decimal deposit amount.
+    pub amount: String,
+    /// Token currency, such as `USDT`.
+    pub currency: String,
+    /// Required rail code the simulated deposit lands on, such as `TRC20`.
+    pub network: String,
+    /// Lifecycle stage to drive the deposit to. Omitted defaults to confirmed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<SimulateDepositStage>,
+}
+
+/// One token accepted on a payment-channel rail.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PaymentChannelToken {
+    /// Token symbol, such as `USDT`.
+    pub symbol: String,
+    /// Dot-decimal minimum deposit. Absent means "cannot quote a minimum right
+    /// now", never "no minimum".
+    pub minimum_deposit: Option<String>,
+}
+
+/// One rail of a payment channel.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PaymentChannelNetwork {
+    /// Rail code, such as `TRC20`.
+    pub network: String,
+    /// Rail status: `provisioning` or `active`.
+    pub status: String,
+    /// Deposit address. Absent until this rail provisions, and never changes
+    /// once it appears.
+    pub address: Option<String>,
+    /// Tokens accepted on this rail.
+    pub tokens: Vec<PaymentChannelToken>,
+}
+
+/// A payment channel: one payer's reusable set of deposit addresses.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PaymentChannel {
+    /// Paymos channel identifier, prefixed `pc_`.
+    pub id: String,
+    /// Owning project identifier.
+    pub project_id: String,
+    /// Merchant identifier for the payer.
+    pub external_id: String,
+    /// Channel status: `active`, `blocked` or `provisioning`.
+    pub status: String,
+    /// Whether deposits are currently credited.
+    pub is_accepting_payments: bool,
+    /// Whether every configured rail has an address.
+    pub is_fully_provisioned: bool,
+    /// Whether this is a sandbox channel.
+    pub is_test: bool,
+    /// Merchant fee percentage applied to deposits.
+    pub applied_fee_percent: f64,
+    /// Customer-paid fee percentage.
+    pub customer_fee_percent: f64,
+    /// Rails provisioned for this channel.
+    pub networks: Vec<PaymentChannelNetwork>,
+    /// Creation timestamp in Unix seconds.
+    pub created_at: i64,
+    /// Last update timestamp in Unix seconds.
+    pub updated_at: i64,
+}
+
+/// One deposit credited to a payment channel.
+///
+/// This is both the API resource and the `data` payload of every
+/// `payment_channel.deposit.*` webhook event (`confirming`, `reorged`,
+/// `confirmed`), so a handler decodes one with
+/// `verifier.construct_event::<PaymentChannelDeposit>(header, raw_body)`.
+///
+/// ORDERING — `confirming` and `reorged` are ADVISORY and may arrive out of
+/// order: a `confirming` can land after the `confirmed` for the same deposit,
+/// and a `reorged` can be superseded by a later `confirmed`. Credit the
+/// merchant only on `payment_channel.deposit.confirmed` with `is_final` true,
+/// and never let an advisory event regress a deposit already known to be
+/// confirmed. Crediting on `confirming` releases goods against money a reorg
+/// can still take back.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PaymentChannelDeposit {
+    /// Paymos deposit identifier, prefixed `pcd_`.
+    pub id: String,
+    /// Channel that received the deposit.
+    pub payment_channel_id: String,
+    /// Owning project identifier.
+    pub project_id: String,
+    /// Merchant identifier of the payer that owns the channel.
+    pub payment_channel_external_id: String,
+    /// Deposit status: `confirming`, `reorged` or `confirmed`.
+    pub status: String,
+    /// Whether the status can no longer change.
+    pub is_final: bool,
+    /// Whether this is a sandbox deposit.
+    pub is_test: bool,
+    /// Token currency.
+    pub currency: String,
+    /// Rail code the deposit landed on.
+    pub network: String,
+    /// Numeric chain identifier.
+    pub chain_id: i64,
+    /// Token contract address, when applicable.
+    pub contract_address: Option<String>,
+    /// Dot-decimal amount received.
+    pub gross: String,
+    /// Dot-decimal Paymos fee.
+    pub fee: String,
+    /// Dot-decimal merchant net amount.
+    pub net: String,
+    /// Merchant fee percentage applied to this deposit.
+    pub applied_fee_percent: f64,
+    /// Customer-paid fee percentage.
+    pub customer_fee_percent: f64,
+    /// Transaction hash.
+    pub tx_hash: String,
+    /// Identifier of the underlying transfer.
+    pub transfer_id: String,
+    /// Sending address, when the chain exposes one.
+    pub source_address: Option<String>,
+    /// Channel address that received the deposit.
+    pub destination_address: String,
+    /// Block that included the transfer.
+    pub block_height: i64,
+    /// Timestamp in Unix seconds of the first including block.
+    pub first_included_block_timestamp: Option<i64>,
+    /// Public explorer URL.
+    pub explorer_url: Option<String>,
+    /// Creation timestamp in Unix seconds.
+    pub created_at: i64,
+    /// Last update timestamp in Unix seconds.
+    pub updated_at: i64,
+    /// Settlement timestamp in Unix seconds.
+    pub confirmed_at: Option<i64>,
+}
+
+/// The one feed position that could not be rendered, and why.
+///
+/// Without it a stuck feed is byte-identical to a quiet day, and a merchant
+/// cannot tell "no new payments" from "I am not seeing my money". Surface it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PaymentChannelDepositFeedBlockage {
+    /// The `pcd_` deposit that could not be rendered.
+    pub deposit_id: String,
+    /// Stable reason code: `booked_auth_missing`, `inconsistent`,
+    /// `deposit_missing`, `channel_missing`, `transfer_missing` or
+    /// `not_confirmed`. Contact support with the deposit identifier.
+    pub reason: String,
+}
+
+/// One page of the confirmed-deposit feed.
+///
+/// This is deliberately NOT a [`CursorPage`]: `next_cursor` is not optional.
+/// Feed positions are global across all merchants, so a page filtered down to
+/// nothing still hands back a cursor past everything it skipped. The feed has
+/// no last page — money keeps arriving — so never stop polling because the
+/// cursor looks final. Store it and resume from it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PaymentChannelDepositFeedPage {
+    /// Deposits in this page, oldest first.
+    pub items: Vec<PaymentChannelDeposit>,
+    /// Cursor to resume from. Always present, including on an empty page.
+    pub next_cursor: String,
+    /// Present only when one position could not be rendered.
+    pub blocked: Option<PaymentChannelDepositFeedBlockage>,
+}
+
+/// Filters accepted by the payment-channel list endpoint.
+///
+/// The endpoint rejects unknown query fields outright, so this set is closed.
+#[derive(Clone, Debug, Default)]
+pub struct PaymentChannelListParams {
+    /// Maximum items returned by one page.
+    pub limit: Option<u32>,
+    /// Opaque cursor returned by the preceding page.
+    pub cursor: Option<String>,
+    /// Status filters: `active`, `blocked` or `provisioning`. Repeated query
+    /// values are emitted in sorted order.
+    pub status: Option<Vec<String>>,
+    /// Merchant payer identifier filter.
+    pub external_id: Option<String>,
+    /// Project filter.
+    pub project_id: Option<String>,
+}
+
+impl PaymentChannelListParams {
+    pub(crate) fn query_pairs(&self) -> Result<Vec<(String, String)>, crate::Error> {
+        let mut values = Vec::new();
+        push_option(&mut values, "limit", self.limit);
+        push_string(&mut values, "cursor", self.cursor.as_deref());
+        if let Some(statuses) = &self.status {
+            if statuses.is_empty() {
+                return Err(crate::Error::InvalidArgument(
+                    "payment channel status filter cannot be empty".to_owned(),
+                ));
+            }
+            values.extend(
+                statuses
+                    .iter()
+                    .map(|status| ("status".to_owned(), status.clone())),
+            );
+        }
+        push_string(&mut values, "external_id", self.external_id.as_deref());
+        push_string(&mut values, "project_id", self.project_id.as_deref());
+        Ok(values)
+    }
+}
+
+/// Filters accepted by the payment-channel deposit feed.
+///
+/// The endpoint rejects unknown query fields outright, so this set is closed.
+#[derive(Clone, Debug, Default)]
+pub struct PaymentChannelDepositFeedParams {
+    /// Maximum items returned by one page.
+    pub limit: Option<u32>,
+    /// Opaque cursor returned by the preceding page. This is how a poller
+    /// resumes.
+    pub cursor: Option<String>,
+    /// Project filter.
+    pub project_id: Option<String>,
+    /// Channel filter.
+    pub payment_channel_id: Option<String>,
+    /// Inclusive Unix-seconds lower confirmation bound. This answers "start me
+    /// from this point in time" on the FIRST poll only; afterwards resume from
+    /// the cursor the feed returned, or whole spans get re-read or skipped.
+    pub confirmed_from: Option<i64>,
+}
+
+impl PaymentChannelDepositFeedParams {
+    pub(crate) fn query_pairs(&self) -> Vec<(String, String)> {
+        let mut values = Vec::new();
+        push_option(&mut values, "limit", self.limit);
+        push_string(&mut values, "cursor", self.cursor.as_deref());
+        push_string(&mut values, "project_id", self.project_id.as_deref());
+        push_string(
+            &mut values,
+            "payment_channel_id",
+            self.payment_channel_id.as_deref(),
+        );
+        push_option(&mut values, "confirmed_from", self.confirmed_from);
+        values
+    }
+}
+
 /// A page returned from a cursor list endpoint.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CursorPage<T> {

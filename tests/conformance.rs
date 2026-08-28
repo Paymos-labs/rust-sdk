@@ -7,9 +7,11 @@ use std::time::Duration;
 
 use paymos::signing::{authorization_header, build_query, sign, string_to_sign};
 use paymos::{
-    ApiErrorKind, CreateInvoiceRequest, CreateWithdrawalRequest, Error, InvoiceListParams,
-    InvoiceSimulationStage, InvoiceStatus, PaymosClient, WebhookError, WebhookEvent,
-    WebhookVerifier, WithdrawalListParams,
+    ApiErrorKind, CreateInvoiceRequest, CreatePaymentChannelRequest, CreateWithdrawalRequest,
+    Error, InvoiceListParams, InvoiceSimulationStage, InvoiceStatus,
+    PaymentChannelDepositFeedParams, PaymentChannelListParams, PaymosClient,
+    SimulateDepositRequest, SimulateDepositStage, WebhookError, WebhookEvent, WebhookVerifier,
+    WithdrawalListParams,
 };
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -24,6 +26,7 @@ struct Contract {
 #[derive(Deserialize)]
 struct Vectors {
     post_signing: SigningVector,
+    post_empty_body_signing: SigningVector,
     get_query_signing: SigningVector,
     webhook: WebhookVector,
 }
@@ -86,6 +89,7 @@ impl TestServer {
                 sender.send(request).await.unwrap();
                 let reason = match response.status {
                     200 => "OK",
+                    201 => "Created",
                     400 => "Bad Request",
                     429 => "Too Many Requests",
                     503 => "Service Unavailable",
@@ -111,20 +115,35 @@ impl TestServer {
         }
     }
 
-    async fn paths(mut self) -> Vec<String> {
-        self.task.await.unwrap();
-        let mut paths = Vec::new();
-        while let Some(request) = self.requests.recv().await {
-            let line = request.lines().next().unwrap();
-            let mut parts = line.split_whitespace();
-            paths.push(format!(
-                "{} {}",
-                parts.next().unwrap(),
-                parts.next().unwrap()
-            ));
-        }
-        paths
+    async fn paths(self) -> Vec<String> {
+        self.raw_requests()
+            .await
+            .iter()
+            .map(|request| {
+                let line = request.lines().next().unwrap();
+                let mut parts = line.split_whitespace();
+                format!("{} {}", parts.next().unwrap(), parts.next().unwrap())
+            })
+            .collect()
     }
+
+    async fn raw_requests(mut self) -> Vec<String> {
+        self.task.await.unwrap();
+        let mut received = Vec::new();
+        while let Some(request) = self.requests.recv().await {
+            received.push(request);
+        }
+        received
+    }
+}
+
+/// The JSON body a captured request carried, or `null` when it carried none.
+fn request_body(request: &str) -> serde_json::Value {
+    request
+        .split_once("\r\n\r\n")
+        .map_or(serde_json::Value::Null, |(_, body)| {
+            serde_json::from_str(body).unwrap_or(serde_json::Value::Null)
+        })
 }
 
 fn contract() -> Contract {
@@ -145,6 +164,22 @@ fn byte_exact_signing_and_query_conformance() {
         post.body.as_bytes(),
     );
     assert_eq!(authorization, post.authorization.unwrap());
+
+    // An absent body signs an EMPTY last segment, never sha256(""). This vector is a POST, so an
+    // SDK that shortcuts on the method ("only GET is empty") fails here.
+    let empty = contract.vectors.post_empty_body_signing;
+    assert_eq!(
+        authorization_header(
+            &empty.api_key,
+            empty.api_secret.as_bytes(),
+            &empty.timestamp,
+            &empty.method,
+            &empty.path,
+            &empty.query,
+            empty.body.as_bytes(),
+        ),
+        empty.authorization.unwrap()
+    );
 
     let get = contract.vectors.get_query_signing;
     let canonical = string_to_sign(
@@ -475,6 +510,358 @@ async fn rejects_a_cursor_repeated_from_the_initial_request() {
         .unwrap();
     assert!(matches!(pager.next().await, Err(Error::Pagination(_))));
     assert_eq!(server.paths().await.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Payment channels.
+//
+// Two paginations live here on purpose. The channel list is an ordinary keyset
+// page whose cursor is null on the last page, so its pager terminates. The
+// deposit feed's cursor is non-nullable and arrives even on an empty page, so
+// it has no pager and no test asserting that it stops — the feed has no end.
+// ---------------------------------------------------------------------------
+
+/// A provisioned rail with an address, and one still provisioning without one.
+const CHANNEL: &str = r#"{"id":"pc_1","project_id":"prj_1","external_id":"customer-42","status":"active","is_accepting_payments":true,"is_fully_provisioned":false,"is_test":true,"applied_fee_percent":1.5,"customer_fee_percent":0,"networks":[{"network":"TRC20","status":"active","address":"TAddress","tokens":[{"symbol":"USDT","minimum_deposit":"1.00"}]},{"network":"BEP20","status":"provisioning","tokens":[{"symbol":"USDT"}]}],"created_at":1700000000,"updated_at":1700000000}"#;
+const BLOCKED_CHANNEL: &str = r#"{"id":"pc_1","project_id":"prj_1","external_id":"customer-42","status":"blocked","is_accepting_payments":false,"is_fully_provisioned":true,"is_test":true,"applied_fee_percent":1.5,"customer_fee_percent":0,"networks":[],"created_at":1700000000,"updated_at":1700000000}"#;
+const DEPOSIT: &str = r#"{"id":"pcd_1","payment_channel_id":"pc_1","project_id":"prj_1","payment_channel_external_id":"customer-42","status":"confirmed","is_final":true,"is_test":true,"currency":"USDT","network":"TRC20","chain_id":728126428,"gross":"100.00","fee":"1.50","net":"98.50","applied_fee_percent":1.5,"customer_fee_percent":0,"tx_hash":"0xhash","transfer_id":"trf_1","destination_address":"TAddress","block_height":12345,"created_at":1700000000,"updated_at":1700000000,"confirmed_at":1700000100}"#;
+
+fn test_client(base_url: &str) -> PaymosClient {
+    PaymosClient::builder("pk_test_key", "sk_test_secret")
+        .base_url(base_url)
+        .max_retries(0)
+        .build()
+        .unwrap()
+}
+
+fn create_channel_request() -> CreatePaymentChannelRequest {
+    CreatePaymentChannelRequest {
+        project_id: "prj_1".to_owned(),
+        external_id: "customer-42".to_owned(),
+    }
+}
+
+const fn created(body: &'static str) -> Response {
+    Response {
+        status: 201,
+        headers: Vec::new(),
+        body,
+    }
+}
+
+#[tokio::test]
+async fn payment_channel_matrix_uses_the_frozen_routes() {
+    let server = TestServer::start(vec![
+        created(CHANNEL),
+        Response::ok(CHANNEL),
+        Response::ok(r#"{"items":[],"next_cursor":null}"#),
+        Response::ok(BLOCKED_CHANNEL),
+        Response::ok(CHANNEL),
+        Response::ok(DEPOSIT),
+        Response::ok(DEPOSIT),
+        Response::ok(r#"{"items":[],"next_cursor":"cur_1"}"#),
+    ])
+    .await;
+    let client = test_client(&server.base_url);
+
+    client
+        .payment_channels()
+        .create(&create_channel_request())
+        .await
+        .unwrap();
+    client.payment_channels().get("pc_1").await.unwrap();
+    client
+        .payment_channels()
+        .list(&PaymentChannelListParams::default())
+        .await
+        .unwrap();
+    client.payment_channels().block("pc_1").await.unwrap();
+    client.payment_channels().unblock("pc_1").await.unwrap();
+    client
+        .payment_channels()
+        .simulate_deposit(
+            "pc_1",
+            &SimulateDepositRequest {
+                amount: "100.00".to_owned(),
+                currency: "USDT".to_owned(),
+                network: "TRC20".to_owned(),
+                stage: None,
+            },
+        )
+        .await
+        .unwrap();
+    client
+        .payment_channel_deposits()
+        .get("pcd_1")
+        .await
+        .unwrap();
+    client
+        .payment_channel_deposits()
+        .read(&PaymentChannelDepositFeedParams::default())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        server.paths().await,
+        vec![
+            "POST /v1/payment-channels",
+            "GET /v1/payment-channels/pc_1",
+            "GET /v1/payment-channels",
+            "POST /v1/payment-channels/pc_1/block",
+            "POST /v1/payment-channels/pc_1/unblock",
+            "POST /v1/sandbox/payment-channels/pc_1/simulate-deposit",
+            "GET /v1/payment-channel-deposits/pcd_1",
+            "GET /v1/payment-channel-deposits",
+        ]
+    );
+}
+
+/// Creation is idempotent on `project_id` + `external_id`: the replay answers
+/// 200 with the channel that already exists. An SDK that treats that as an
+/// error breaks every checkout after the first.
+#[tokio::test]
+async fn creating_the_same_channel_twice_returns_the_channel_both_times() {
+    let server = TestServer::start(vec![created(CHANNEL), Response::ok(CHANNEL)]).await;
+    let client = test_client(&server.base_url);
+    let request = create_channel_request();
+
+    let fresh = client.payment_channels().create(&request).await.unwrap();
+    let replay = client.payment_channels().create(&request).await.unwrap();
+
+    assert_eq!(fresh.id, "pc_1");
+    assert_eq!(replay.id, "pc_1");
+    assert_eq!(server.paths().await.len(), 2);
+}
+
+/// Absent is not null and not a zero value: an unprovisioned rail has no
+/// address, and a token without a quotable minimum has no minimum deposit.
+#[tokio::test]
+async fn absent_wire_members_arrive_as_none() {
+    let server = TestServer::start(vec![Response::ok(CHANNEL)]).await;
+    let client = test_client(&server.base_url);
+
+    let channel = client.payment_channels().get("pc_1").await.unwrap();
+
+    assert!(!channel.is_fully_provisioned);
+    assert_eq!(channel.networks[0].address.as_deref(), Some("TAddress"));
+    assert_eq!(
+        channel.networks[0].tokens[0].minimum_deposit.as_deref(),
+        Some("1.00")
+    );
+    assert!(channel.networks[1].address.is_none());
+    assert!(channel.networks[1].tokens[0].minimum_deposit.is_none());
+}
+
+/// Block is not a void call.
+#[tokio::test]
+async fn block_returns_the_updated_channel() {
+    let server = TestServer::start(vec![Response::ok(BLOCKED_CHANNEL)]).await;
+    let client = test_client(&server.base_url);
+
+    let channel = client.payment_channels().block("pc_1").await.unwrap();
+
+    assert!(!channel.is_accepting_payments);
+    assert_eq!(channel.status, "blocked");
+}
+
+/// The mirror of the block test: only asserting one direction has let the
+/// other be a no-op before.
+#[tokio::test]
+async fn unblock_returns_the_updated_channel() {
+    let server = TestServer::start(vec![Response::ok(CHANNEL)]).await;
+    let client = test_client(&server.base_url);
+
+    let channel = client.payment_channels().unblock("pc_1").await.unwrap();
+
+    assert!(channel.is_accepting_payments);
+    assert_eq!(channel.status, "active");
+}
+
+/// The test that fails if someone modelled the feed on the invoice list: feed
+/// positions are global, so a page that matched nothing still advances past
+/// everything this merchant's filter skipped.
+#[tokio::test]
+async fn an_empty_feed_page_still_yields_a_cursor_to_resume_from() {
+    let server =
+        TestServer::start(vec![Response::ok(r#"{"items":[],"next_cursor":"cur_2"}"#)]).await;
+    let client = test_client(&server.base_url);
+
+    let page = client
+        .payment_channel_deposits()
+        .read(&PaymentChannelDepositFeedParams {
+            cursor: Some("cur_1".to_owned()),
+            ..PaymentChannelDepositFeedParams::default()
+        })
+        .await
+        .unwrap();
+
+    assert!(page.items.is_empty());
+    assert_eq!(page.next_cursor, "cur_2");
+    assert!(page.blocked.is_none());
+}
+
+/// Without `blocked`, a stuck feed is byte-identical to a quiet day.
+#[tokio::test]
+async fn a_blocked_feed_page_surfaces_the_deposit_and_the_reason() {
+    let server = TestServer::start(vec![Response::ok(
+        r#"{"items":[],"next_cursor":"cur_2","blocked":{"deposit_id":"pcd_9","reason":"not_confirmed"}}"#,
+    )])
+    .await;
+    let client = test_client(&server.base_url);
+
+    let page = client
+        .payment_channel_deposits()
+        .read(&PaymentChannelDepositFeedParams::default())
+        .await
+        .unwrap();
+
+    let blockage = page.blocked.expect("blocked must reach the caller");
+    assert_eq!(blockage.deposit_id, "pcd_9");
+    assert_eq!(blockage.reason, "not_confirmed");
+    assert_eq!(page.next_cursor, "cur_2");
+}
+
+/// The API rejects unknown query fields outright, so a camelCase slip is a 400
+/// at a merchant and a green test here if the wire is not asserted.
+#[tokio::test]
+async fn every_filter_reaches_the_wire_in_snake_case() {
+    let server = TestServer::start(vec![
+        Response::ok(r#"{"items":[],"next_cursor":null}"#),
+        Response::ok(r#"{"items":[],"next_cursor":"cur_2"}"#),
+    ])
+    .await;
+    let client = test_client(&server.base_url);
+
+    client
+        .payment_channels()
+        .list(&PaymentChannelListParams {
+            limit: Some(5),
+            cursor: Some("cur_1".to_owned()),
+            status: Some(vec!["active".to_owned(), "blocked".to_owned()]),
+            external_id: Some("customer-42".to_owned()),
+            project_id: Some("prj_1".to_owned()),
+        })
+        .await
+        .unwrap();
+    client
+        .payment_channel_deposits()
+        .read(&PaymentChannelDepositFeedParams {
+            limit: Some(2),
+            cursor: Some("cur_1".to_owned()),
+            project_id: Some("prj_1".to_owned()),
+            payment_channel_id: Some("pc_1".to_owned()),
+            confirmed_from: Some(1_700_000_000),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        server.paths().await,
+        vec![
+            "GET /v1/payment-channels?cursor=cur_1&external_id=customer-42&limit=5&project_id=prj_1&status=active&status=blocked",
+            "GET /v1/payment-channel-deposits?confirmed_from=1700000000&cursor=cur_1&limit=2&payment_channel_id=pc_1&project_id=prj_1",
+        ]
+    );
+}
+
+/// A space is `%20` in a path and `+` in a form-encoded query: the ids go
+/// through the RFC 3986 path encoder the signature is computed over.
+#[tokio::test]
+async fn identifiers_are_path_encoded_not_query_encoded() {
+    let server = TestServer::start(vec![Response::ok(CHANNEL), Response::ok(DEPOSIT)]).await;
+    let client = test_client(&server.base_url);
+
+    client.payment_channels().get("pc 1/2").await.unwrap();
+    client
+        .payment_channel_deposits()
+        .get("pcd 1/2")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        server.paths().await,
+        vec![
+            "GET /v1/payment-channels/pc%201%2F2",
+            "GET /v1/payment-channel-deposits/pcd%201%2F2",
+        ]
+    );
+}
+
+/// `network` is required, and an unset stage is omitted from the body
+/// entirely — not `null`, which the server reads as an unknown value.
+#[tokio::test]
+async fn simulate_sends_the_network_and_omits_an_unset_stage() {
+    let server = TestServer::start(vec![Response::ok(DEPOSIT), Response::ok(DEPOSIT)]).await;
+    let client = test_client(&server.base_url);
+
+    client
+        .payment_channels()
+        .simulate_deposit(
+            "pc_1",
+            &SimulateDepositRequest {
+                amount: "100.00".to_owned(),
+                currency: "USDT".to_owned(),
+                network: "TRC20".to_owned(),
+                stage: None,
+            },
+        )
+        .await
+        .unwrap();
+    client
+        .payment_channels()
+        .simulate_deposit(
+            "pc_1",
+            &SimulateDepositRequest {
+                amount: "100.00".to_owned(),
+                currency: "USDT".to_owned(),
+                network: "TRC20".to_owned(),
+                stage: Some(SimulateDepositStage::Confirming),
+            },
+        )
+        .await
+        .unwrap();
+
+    let requests = server.raw_requests().await;
+    let default_stage = request_body(&requests[0]);
+    assert_eq!(default_stage["amount"], "100.00");
+    assert_eq!(default_stage["currency"], "USDT");
+    assert_eq!(default_stage["network"], "TRC20");
+    assert!(default_stage.get("stage").is_none());
+    assert_eq!(request_body(&requests[1])["stage"], "confirming");
+}
+
+/// The channel list IS an ordinary keyset page, so its pager stops on a null
+/// cursor. The deposit feed deliberately has no pager to stop.
+#[tokio::test]
+async fn the_channel_pager_terminates_on_a_null_cursor() {
+    let server = TestServer::start(vec![
+        Response::ok(
+            r#"{"items":[{"id":"pc_1","project_id":"prj_1","external_id":"customer-42","status":"active","is_accepting_payments":true,"is_fully_provisioned":true,"is_test":true,"applied_fee_percent":1.5,"customer_fee_percent":0,"networks":[],"created_at":1700000000,"updated_at":1700000000}],"next_cursor":"cur_2"}"#,
+        ),
+        Response::ok(
+            r#"{"items":[{"id":"pc_2","project_id":"prj_1","external_id":"customer-43","status":"active","is_accepting_payments":true,"is_fully_provisioned":true,"is_test":true,"applied_fee_percent":1.5,"customer_fee_percent":0,"networks":[],"created_at":1700000000,"updated_at":1700000000}],"next_cursor":null}"#,
+        ),
+    ])
+    .await;
+    let client = test_client(&server.base_url);
+    let mut pager = client
+        .payment_channels()
+        .pager(PaymentChannelListParams::default(), Some(10))
+        .unwrap();
+
+    let first = pager.next().await.unwrap().unwrap();
+    let second = pager.next().await.unwrap().unwrap();
+
+    assert_eq!(first.id, "pc_1");
+    assert_eq!(second.id, "pc_2");
+    assert!(pager.next().await.unwrap().is_none());
+    assert_eq!(
+        server.paths().await,
+        vec![
+            "GET /v1/payment-channels",
+            "GET /v1/payment-channels?cursor=cur_2",
+        ]
+    );
 }
 
 async fn read_request(socket: &mut tokio::net::TcpStream) -> String {

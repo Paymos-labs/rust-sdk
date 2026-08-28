@@ -10,8 +10,11 @@ use zeroize::Zeroizing;
 
 use crate::error::{ApiError, ApiErrorKind, ProblemDetails};
 use crate::models::{
-    Balance, CreateInvoiceRequest, CreateWithdrawalRequest, CursorPage, Invoice, InvoiceListItem,
-    InvoiceListParams, InvoiceSimulationStage, ServerTime, Withdrawal, WithdrawalListParams,
+    Balance, CreateInvoiceRequest, CreatePaymentChannelRequest, CreateWithdrawalRequest,
+    CursorPage, Invoice, InvoiceListItem, InvoiceListParams, InvoiceSimulationStage,
+    PaymentChannel, PaymentChannelDeposit, PaymentChannelDepositFeedPage,
+    PaymentChannelDepositFeedParams, PaymentChannelListParams, ServerTime, SimulateDepositRequest,
+    Withdrawal, WithdrawalListParams,
 };
 use crate::signing::{authorization_header, build_query, encode_component};
 use crate::{Error, SDK_VERSION};
@@ -80,6 +83,18 @@ impl PaymosClient {
     #[must_use]
     pub const fn withdrawals(&self) -> Withdrawals<'_> {
         Withdrawals { client: self }
+    }
+
+    /// Accesses payment-channel operations.
+    #[must_use]
+    pub const fn payment_channels(&self) -> PaymentChannels<'_> {
+        PaymentChannels { client: self }
+    }
+
+    /// Accesses payment-channel deposit operations.
+    #[must_use]
+    pub const fn payment_channel_deposits(&self) -> PaymentChannelDeposits<'_> {
+        PaymentChannelDeposits { client: self }
     }
 
     /// Accesses balance operations.
@@ -442,6 +457,161 @@ impl Withdrawals<'_> {
     }
 }
 
+/// Payment-channel operations.
+pub struct PaymentChannels<'a> {
+    client: &'a PaymosClient,
+}
+
+impl PaymentChannels<'_> {
+    /// Creates a payment channel, or returns the one that already exists.
+    ///
+    /// The same `project_id` plus `external_id` answers `200` with the existing
+    /// channel instead of `201` with a duplicate. Both are a channel, so a
+    /// caller never inspects the status: this is safe on every checkout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for serialization, transport, API, or response failures.
+    pub async fn create(
+        &self,
+        request: &CreatePaymentChannelRequest,
+    ) -> Result<PaymentChannel, Error> {
+        self.client
+            .request_json(Method::POST, "/v1/payment-channels", "", request)
+            .await
+    }
+
+    /// Gets a payment channel by identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when the identifier is invalid or the API call fails.
+    pub async fn get(&self, payment_channel_id: &str) -> Result<PaymentChannel, Error> {
+        let path = format!("/v1/payment-channels/{}", required_id(payment_channel_id)?);
+        self.client.request_empty(Method::GET, &path, "").await
+    }
+
+    /// Lists one payment-channel page.
+    ///
+    /// This is an ordinary keyset page whose cursor is null on the last page —
+    /// unlike the deposit feed, which never ends.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when filters are invalid or the API call fails.
+    pub async fn list(
+        &self,
+        params: &PaymentChannelListParams,
+    ) -> Result<CursorPage<PaymentChannel>, Error> {
+        let query = build_query(params.query_pairs()?)?;
+        self.client
+            .request_empty(Method::GET, "/v1/payment-channels", &query)
+            .await
+    }
+
+    /// Creates a bounded async cursor pager.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Pagination`] when `max_pages` is zero.
+    pub fn pager(
+        &self,
+        params: PaymentChannelListParams,
+        max_pages: Option<usize>,
+    ) -> Result<PaymentChannelPager, Error> {
+        PaymentChannelPager::new(
+            self.client.clone(),
+            params,
+            max_pages.unwrap_or(DEFAULT_MAX_PAGES),
+        )
+    }
+
+    /// Stops the channel from accepting payments and returns the updated channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when the identifier is invalid or the API call fails.
+    pub async fn block(&self, payment_channel_id: &str) -> Result<PaymentChannel, Error> {
+        let path = format!(
+            "/v1/payment-channels/{}/block",
+            required_id(payment_channel_id)?
+        );
+        self.client.request_empty(Method::POST, &path, "").await
+    }
+
+    /// Resumes accepting payments and returns the updated channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when the identifier is invalid or the API call fails.
+    pub async fn unblock(&self, payment_channel_id: &str) -> Result<PaymentChannel, Error> {
+        let path = format!(
+            "/v1/payment-channels/{}/unblock",
+            required_id(payment_channel_id)?
+        );
+        self.client.request_empty(Method::POST, &path, "").await
+    }
+
+    /// Fabricates one sandbox deposit on this channel.
+    ///
+    /// Sandbox only: a production credential gets an error, not a deposit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for an invalid identifier or when the API call fails.
+    pub async fn simulate_deposit(
+        &self,
+        payment_channel_id: &str,
+        request: &SimulateDepositRequest,
+    ) -> Result<PaymentChannelDeposit, Error> {
+        let path = format!(
+            "/v1/sandbox/payment-channels/{}/simulate-deposit",
+            required_id(payment_channel_id)?
+        );
+        self.client
+            .request_json(Method::POST, &path, "", request)
+            .await
+    }
+}
+
+/// Payment-channel deposit operations.
+pub struct PaymentChannelDeposits<'a> {
+    client: &'a PaymosClient,
+}
+
+impl PaymentChannelDeposits<'_> {
+    /// Gets a payment-channel deposit by identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when the identifier is invalid or the API call fails.
+    pub async fn get(&self, deposit_id: &str) -> Result<PaymentChannelDeposit, Error> {
+        let path = format!("/v1/payment-channel-deposits/{}", required_id(deposit_id)?);
+        self.client.request_empty(Method::GET, &path, "").await
+    }
+
+    /// Reads ONE page of the confirmed-deposit feed.
+    ///
+    /// Deliberately not called `list`, and deliberately without a pager: the
+    /// feed has no end, so a helper that looped until the cursor was empty
+    /// would either loop forever or stop on the first quiet page and leave a
+    /// merchant's reconciliation silently behind. Store
+    /// [`PaymentChannelDepositFeedPage::next_cursor`] and call this again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when filters are invalid or the API call fails.
+    pub async fn read(
+        &self,
+        params: &PaymentChannelDepositFeedParams,
+    ) -> Result<PaymentChannelDepositFeedPage, Error> {
+        let query = build_query(params.query_pairs())?;
+        self.client
+            .request_empty(Method::GET, "/v1/payment-channel-deposits", &query)
+            .await
+    }
+}
+
 /// Balance operations.
 pub struct Balances<'a> {
     client: &'a PaymosClient,
@@ -585,6 +755,73 @@ impl WithdrawalPager {
                 return Ok(None);
             }
             let page = self.client.withdrawals().list(&self.params).await?;
+            self.pages += 1;
+            self.buffered.extend(page.items);
+            match page.next_cursor {
+                Some(cursor) if !cursor.is_empty() => {
+                    if !self.seen_cursors.insert(cursor.clone()) {
+                        return Err(Error::Pagination(
+                            "API returned a pagination cursor more than once".to_owned(),
+                        ));
+                    }
+                    self.params.cursor = Some(cursor);
+                }
+                _ => self.done = true,
+            }
+        }
+    }
+}
+
+/// Bounded asynchronous payment-channel cursor traversal.
+///
+/// This exists for the channel LIST, whose cursor is null on the last page.
+/// The deposit feed has no equivalent on purpose — see
+/// [`PaymentChannelDeposits::read`].
+pub struct PaymentChannelPager {
+    client: PaymosClient,
+    params: PaymentChannelListParams,
+    max_pages: usize,
+    pages: usize,
+    buffered: VecDeque<PaymentChannel>,
+    seen_cursors: HashSet<String>,
+    done: bool,
+}
+
+impl PaymentChannelPager {
+    fn new(
+        client: PaymosClient,
+        params: PaymentChannelListParams,
+        max_pages: usize,
+    ) -> Result<Self, Error> {
+        if max_pages == 0 {
+            return Err(Error::Pagination("max_pages must be positive".to_owned()));
+        }
+        let seen_cursors = params.cursor.iter().cloned().collect();
+        Ok(Self {
+            client,
+            params,
+            max_pages,
+            pages: 0,
+            buffered: VecDeque::new(),
+            seen_cursors,
+            done: false,
+        })
+    }
+
+    /// Returns the next item, or `None` at the end or configured page bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when a page request fails or a cursor is repeated.
+    pub async fn next(&mut self) -> Result<Option<PaymentChannel>, Error> {
+        loop {
+            if let Some(item) = self.buffered.pop_front() {
+                return Ok(Some(item));
+            }
+            if self.done || self.pages >= self.max_pages {
+                return Ok(None);
+            }
+            let page = self.client.payment_channels().list(&self.params).await?;
             self.pages += 1;
             self.buffered.extend(page.items);
             match page.next_cursor {

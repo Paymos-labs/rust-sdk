@@ -12,14 +12,17 @@ mod version;
 mod webhook;
 
 pub use client::{
-    Balances, ClientBuilder, InvoicePager, Invoices, PaymosClient, System, WithdrawalPager,
-    Withdrawals,
+    Balances, ClientBuilder, InvoicePager, Invoices, PaymentChannelDeposits, PaymentChannelPager,
+    PaymentChannels, PaymosClient, System, WithdrawalPager, Withdrawals,
 };
 pub use error::{ApiError, ApiErrorKind, Error, ProblemError};
 pub use models::{
-    Balance, CreateInvoiceRequest, CreateWithdrawalRequest, CursorPage, Invoice, InvoiceListItem,
-    InvoiceListParams, InvoiceSimulationStage, InvoiceStatus, Order, Payment, ServerTime, Transfer,
-    Withdrawal, WithdrawalListParams, WithdrawalStatus,
+    Balance, CreateInvoiceRequest, CreatePaymentChannelRequest, CreateWithdrawalRequest,
+    CursorPage, Invoice, InvoiceListItem, InvoiceListParams, InvoiceSimulationStage, InvoiceStatus,
+    Order, Payment, PaymentChannel, PaymentChannelDeposit, PaymentChannelDepositFeedBlockage,
+    PaymentChannelDepositFeedPage, PaymentChannelDepositFeedParams, PaymentChannelListParams,
+    PaymentChannelNetwork, PaymentChannelToken, ServerTime, SimulateDepositRequest,
+    SimulateDepositStage, Transfer, Withdrawal, WithdrawalListParams, WithdrawalStatus,
 };
 pub use version::SDK_VERSION;
 pub use webhook::{WebhookError, WebhookEvent, WebhookVerifier};

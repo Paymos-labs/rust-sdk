@@ -7,7 +7,8 @@
     "signature_encoding": "base64",
     "timestamp_header": "X-Request-Timestamp",
     "authorization_format": "HMAC-SHA256 {api_key}:{signature}",
-    "canonical_format": "{timestamp}\\n{uppercase_method}\\n{path}\\n{query_with_optional_leading_question_mark}\\n{sha256_hex_body_or_empty}"
+    "canonical_format": "{timestamp}\\n{uppercase_method}\\n{path}\\n{query_with_optional_leading_question_mark}\\n{body_hash}",
+    "body_hash": "lowercase hex sha256 of the exact body bytes; EMPTY STRING when the request has no body (never sha256(\"\") = e3b0c442...), so a body-less request signs a trailing newline with nothing after it"
   },
   "query": {
     "encoding": "RFC3986",
@@ -60,6 +61,18 @@
     ],
     "balances": [
       { "method": "GET", "path": "/v1/balances", "operation": "get" }
+    ],
+    "payment_channels": [
+      { "method": "POST", "path": "/v1/payment-channels", "operation": "create" },
+      { "method": "GET", "path": "/v1/payment-channels/{id}", "operation": "get" },
+      { "method": "GET", "path": "/v1/payment-channels", "operation": "list" },
+      { "method": "POST", "path": "/v1/payment-channels/{id}/block", "operation": "block" },
+      { "method": "POST", "path": "/v1/payment-channels/{id}/unblock", "operation": "unblock" },
+      { "method": "POST", "path": "/v1/sandbox/payment-channels/{id}/simulate-deposit", "operation": "simulate_deposit" }
+    ],
+    "payment_channel_deposits": [
+      { "method": "GET", "path": "/v1/payment-channel-deposits", "operation": "list" },
+      { "method": "GET", "path": "/v1/payment-channel-deposits/{id}", "operation": "get" }
     ]
   },
   "vectors": {
@@ -74,6 +87,19 @@
       "body_sha256": "e9eb495accbce2a0e95bbe079b9f9e42ccae20371c1516e3ed3036d2a787cf53",
       "signature": "AS+pbf8GlSGee9Oh5XhpasBpXB488AGEoqjDMx+dwak=",
       "authorization": "HMAC-SHA256 pk_test_key:AS+pbf8GlSGee9Oh5XhpasBpXB488AGEoqjDMx+dwak="
+    },
+    "post_empty_body_signing": {
+      "note": "POST with NO body: bodyHash is the empty string, never sha256(\"\"). Pins the fork a method-based shortcut (\"only GET is empty\") would miss.",
+      "api_key": "pk_test_key",
+      "api_secret": "sk_test_secret",
+      "timestamp": "1700000000",
+      "method": "POST",
+      "path": "/v1/invoices/inv_74BPZFhr9qy9Uz2fbRkdJX/cancel",
+      "query": "",
+      "body": "",
+      "body_sha256": "",
+      "signature": "3vOr/bIyVDPQWapX33E1H5tdzAseP+orHIX0q/HNuR8=",
+      "authorization": "HMAC-SHA256 pk_test_key:3vOr/bIyVDPQWapX33E1H5tdzAseP+orHIX0q/HNuR8="
     },
     "get_query_signing": {
       "api_key": "pk_test_key",

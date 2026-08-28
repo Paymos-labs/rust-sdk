@@ -1,8 +1,9 @@
 # Paymos Rust SDK
 
 Official async Rust client for the [Paymos Merchant API](https://paymos.io/docs).
-It provides typed invoices, withdrawals, balances, cursor pagination, structured
-errors, automatic request signing, safe retries, and raw-body webhook verification.
+It provides typed invoices, withdrawals, balances, static per-customer wallets and
+their confirmed-deposit feed, cursor pagination, structured errors, automatic request signing,
+safe retries, and raw-body webhook verification.
 
 ## Requirements
 
@@ -75,6 +76,64 @@ while let Some(invoice) = pager.next().await? {
 The pager stops at its configured page bound and rejects any cursor returned more
 than once.
 
+## Payment channels
+
+A channel is one payer's reusable set of deposit addresses. Create it, read its
+rails, then poll the confirmed-deposit feed and persist the cursor it returns.
+
+```rust,no_run
+# use paymos::{CreatePaymentChannelRequest, PaymentChannelDepositFeedParams, PaymosClient};
+# async fn example(paymos: PaymosClient, saved_cursor: Option<String>) -> Result<(), paymos::Error> {
+let channel = paymos
+    .payment_channels()
+    .create(&CreatePaymentChannelRequest {
+        project_id: "prj_xxxxxxxxxxxx".to_owned(),
+        external_id: "customer_42".to_owned(),
+    })
+    .await?;
+
+for rail in &channel.networks {
+    println!("{} {} {:?}", rail.network, rail.status, rail.address);
+}
+
+let feed = paymos
+    .payment_channel_deposits()
+    .read(&PaymentChannelDepositFeedParams {
+        cursor: saved_cursor,
+        limit: Some(100),
+        ..PaymentChannelDepositFeedParams::default()
+    })
+    .await?;
+
+for deposit in &feed.items {
+    println!("{} {} {}", deposit.id, deposit.currency, deposit.net);
+}
+
+// Persist this and pass it back as `cursor` on the next poll.
+let next_cursor: String = feed.next_cursor;
+# let _ = next_cursor;
+# Ok(())
+# }
+```
+
+Four things that bite an integrator who guesses:
+
+- Repeating the same `external_id` returns the **same** channel — `200` instead
+  of `201`, and both bodies are a channel. Call it on every checkout; a repeat
+  is not a duplicate and not an error.
+- A rail's `address` is `None` **until that rail finishes provisioning**, and
+  never changes once it appears. `None` means "not yet", not "no address" —
+  offer the payer only the rails that already have one.
+- `minimum_deposit: None` means "we cannot quote a minimum right now", not
+  "there is no minimum". Treating `None` as zero is how a merchant accepts a
+  deposit that lands below the live minimum and is never credited.
+- `next_cursor` is a plain `String` and is **never** empty, not even on a page
+  with no items. Store it and resume from it. Do not loop until it is empty the
+  way the invoice pager ends: that loop either spins forever or, worse, stops on
+  the first quiet page and leaves the merchant's reconciliation silently behind.
+  `confirmed_from` is only the first poll's lower bound — after that the stored
+  cursor is the resume mechanism.
+
 ## Errors and retries
 
 ```rust,no_run
@@ -113,6 +172,32 @@ println!("{} {}", event.event_id, event.event_type);
 Pass the exact request bytes before JSON parsing. API request signatures use
 base64 HMAC-SHA256 over the canonical request; webhook signatures use lowercase
 hex HMAC-SHA256 over `{timestamp}.{raw_body}`. They are intentionally different.
+
+### Payment-channel deposit events
+
+The three `payment_channel.deposit.*` events each carry a full `PaymentChannelDeposit`
+as their payload, so pass it as the type parameter:
+
+```rust,no_run
+# use paymos::{PaymentChannelDeposit, WebhookEvent, WebhookVerifier};
+# fn credit(_payer: &str, _net: &str) {}
+# fn example(signature: &str, raw_body: &[u8]) -> Result<(), paymos::WebhookError> {
+# let verifier = WebhookVerifier::new("whsec_x")?;
+let event: WebhookEvent<PaymentChannelDeposit> = verifier.construct_event(signature, raw_body)?;
+
+if event.event_type == "payment_channel.deposit.confirmed" && event.data.is_final {
+    // Idempotent by event.event_id.
+    credit(&event.data.payment_channel_external_id, &event.data.net);
+}
+# Ok(())
+# }
+```
+
+**`confirming` and `reorged` are advisory and may arrive out of order.** A `confirming`
+can land after the `confirmed` for the same deposit, and a `reorged` can be superseded by
+a later `confirmed`. Credit only on `payment_channel.deposit.confirmed` with `is_final`
+true, and never let an advisory event regress a deposit you already know is confirmed.
+Crediting on `confirming` releases goods against money a reorg can still take back.
 
 ## Release integrity
 
