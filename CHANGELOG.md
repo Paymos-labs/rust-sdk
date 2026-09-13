@@ -4,6 +4,14 @@ All notable changes to the official Paymos Rust SDK are documented here.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-13
+
+- fix(sdk-conformance): восемь копий контракта разошлись с каноном — 403 снова permission
+- fix(sdk): HTTPS обязателен, а 403 перестал притворяться ошибкой ключа
+
+- **403 is no longer reported as an authentication failure.** `ApiErrorKind::Permission` is a new variant beside `Authentication`. The enum is `#[non_exhaustive]`, so an existing `match` still compiles.
+- **Base URL must use HTTPS.** Plain HTTP is accepted only against a loopback host, which is what a local integration test points at. The API secret signs every request, so a plaintext base URL put that credential on the wire.
+
 ## [1.2.0] - 2026-08-28
 
 - release: the changelog rot had a cause, and it was not the one I named

@@ -32,7 +32,7 @@
   "errors": {
     "400": "validation",
     "401": "authentication",
-    "403": "authentication",
+    "403": "permission",
     "404": "not_found",
     "409": "conflict",
     "410": "gone",
