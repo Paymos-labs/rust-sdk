@@ -19,8 +19,16 @@ pub struct ProblemError {
 pub enum ApiErrorKind {
     /// Request validation failed.
     Validation,
-    /// Credentials are absent, invalid, or insufficient.
+    /// Credentials are absent, malformed, or unverifiable.
     Authentication,
+    /// The credential was accepted and something else refused.
+    ///
+    /// Its own category on purpose: 403 carries wrong-key-type (`payout_key_required`, `payment_key_required`,
+    /// `forbidden`) next to plain business state (`whitelist_required`,
+    /// `merchant_suspended`, `widget_inactive`). Reporting an unwhitelisted payout address as
+    /// [`Self::Authentication`] sends the on-call engineer to rotate perfectly good credentials.
+    /// Match on [`ApiError::code`] for the specific remedy.
+    Permission,
     /// The resource was not found.
     NotFound,
     /// The request conflicts with current resource state.
@@ -41,7 +49,8 @@ impl ApiErrorKind {
     pub(crate) const fn from_status(status: u16) -> Self {
         match status {
             400 => Self::Validation,
-            401 | 403 => Self::Authentication,
+            401 => Self::Authentication,
+            403 => Self::Permission,
             404 => Self::NotFound,
             409 => Self::Conflict,
             410 => Self::Gone,
