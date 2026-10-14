@@ -235,6 +235,12 @@ pub struct Invoice {
     pub expires_at: Option<i64>,
     /// Completion timestamp in Unix seconds.
     pub completed_at: Option<i64>,
+    /// invoice-late-payment: the late-payment fact — money crossed the invoice's total after it
+    /// had already closed as expired/underpaid. Unix seconds; None while the invoice has no late
+    /// mark — the server omits the field then. `status` keeps its terminal
+    /// meaning — this marker travels beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paid_late_at: Option<i64>,
 }
 
 /// Compact invoice returned from the list endpoint.
@@ -266,6 +272,9 @@ pub struct InvoiceListItem {
     pub expires_at: Option<i64>,
     /// Completion timestamp in Unix seconds.
     pub completed_at: Option<i64>,
+    /// invoice-late-payment: additive late mark, Unix seconds; None while there is no mark (field omitted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paid_late_at: Option<i64>,
 }
 
 /// Input for creating a withdrawal. Monetary amounts stay decimal strings.
@@ -674,6 +683,9 @@ pub enum InvoiceSimulationStage {
     Underpay,
     /// Cancel the invoice.
     Cancel,
+    /// invoice-late-payment: pay the full amount after the deadline — the invoice keeps its
+    /// terminal decision and receives the late-payment mark.
+    PaidLate,
 }
 
 fn push_string(values: &mut Vec<(String, String)>, key: &str, value: Option<&str>) {
