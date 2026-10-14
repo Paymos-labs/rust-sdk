@@ -4,6 +4,15 @@ All notable changes to the official Paymos Rust SDK are documented here.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-14
+
+- Make the SDK CI tier green
+- Fix invoice-late-payment audit findings (tasks 4.1-4.8)
+- feat(invoices): accept full late payments without reopening invoices
+
+- **403 is no longer reported as an authentication failure.** `ApiErrorKind::Permission` is a new variant beside `Authentication`. The enum is `#[non_exhaustive]`, so an existing `match` still compiles.
+- **Base URL must use HTTPS.** Plain HTTP is accepted only against a loopback host, which is what a local integration test points at. The API secret signs every request, so a plaintext base URL put that credential on the wire.
+
 ## [1.2.1] - 2026-09-13
 
 - fix(sdk-conformance): восемь копий контракта разошлись с каноном — 403 снова permission
