@@ -1,7 +1,7 @@
 # Paymos Rust SDK
 
 Official async Rust client for the [Paymos Merchant API](https://paymos.io/docs).
-It provides typed invoices, withdrawals, balances, static per-customer wallets and
+It provides typed invoices, withdrawals, refunds, balances, static per-customer wallets and
 their confirmed-deposit feed, cursor pagination, structured errors, automatic request signing,
 safe retries, and raw-body webhook verification.
 
@@ -75,6 +75,45 @@ while let Some(invoice) = pager.next().await? {
 
 The pager stops at its configured page bound and rejects any cursor returned more
 than once.
+
+## Invoice refunds
+
+```rust,no_run
+# use paymos::{PaymosClient, RefundListParams, RefundMode};
+# async fn example(paymos: PaymosClient) -> Result<(), paymos::Error> {
+let refund = paymos
+    .refunds()
+    .create("inv_xxxxxxxxxxxx", RefundMode::Overpayment, "refund-order-123")
+    .await?;
+println!("{} {}", refund.withdrawal_id(), refund.amount());
+
+let current = paymos.refunds().get(refund.withdrawal_id()).await?;
+let page = paymos.refunds().list(&RefundListParams {
+    invoice_id: Some(current.invoice_id().to_owned()),
+    created_from: Some("2026-10-01T00:00:00Z".to_owned()),
+    limit: Some(100),
+    ..RefundListParams::default()
+}).await?;
+// Pass page.next_cursor as cursor to read the next page with the same filters.
+# let _ = page;
+# Ok(())
+# }
+```
+
+Refunds require a Payment key. `Full` returns the remaining payment;
+`Overpayment` returns the remaining excess. The server calculates the amount and
+selects the first deposit sender as recipient. A payment of 120 against an order
+of 100 returns 20 in overpayment mode, or 120 in full mode. After the overpayment
+completes, a new full refund returns 100.
+
+Create sends only `invoice_id`, `mode`, and `external_order_id`. Keep the same key
+and mode after an unknown outcome: a new request returns 201, a replay returns
+200 with the existing refund, and changing the mode for that key returns a
+structured 409 error. Refund responses expose read-only accessors and preserve
+amounts as decimal strings. List supports `invoice_id`, repeated `status`, RFC
+3339 `created_from`/`created_to`, `cursor`, and `limit` filters in the credential's
+project and environment scope. For sandbox completion, call
+`paymos.refunds().simulate_completion(refund.withdrawal_id())`.
 
 ## Payment channels
 

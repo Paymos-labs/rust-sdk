@@ -374,6 +374,220 @@ pub struct Withdrawal {
     pub cancelled_at: Option<i64>,
 }
 
+/// Server-calculated invoice refund mode.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefundMode {
+    /// Return the entire remaining payment.
+    Full,
+    /// Return the entire remaining overpayment.
+    Overpayment,
+}
+
+/// Filters accepted by the refund list endpoint.
+#[derive(Clone, Debug, Default)]
+pub struct RefundListParams {
+    /// Maximum items returned by one page.
+    pub limit: Option<u32>,
+    /// Opaque cursor returned by the preceding page.
+    pub cursor: Option<String>,
+    /// Owning invoice filter.
+    pub invoice_id: Option<String>,
+    /// Status filters.
+    pub status: Option<Vec<WithdrawalStatus>>,
+    /// Inclusive RFC 3339 lower creation bound.
+    pub created_from: Option<String>,
+    /// Exclusive RFC 3339 upper creation bound.
+    pub created_to: Option<String>,
+}
+
+impl RefundListParams {
+    pub(crate) fn query_pairs(&self) -> Result<Vec<(String, String)>, crate::Error> {
+        let mut values = Vec::new();
+        push_option(&mut values, "limit", self.limit);
+        push_string(&mut values, "cursor", self.cursor.as_deref());
+        push_string(&mut values, "invoice_id", self.invoice_id.as_deref());
+        if let Some(statuses) = &self.status {
+            if statuses.is_empty() {
+                return Err(crate::Error::InvalidArgument(
+                    "refund status filter cannot be empty".to_owned(),
+                ));
+            }
+            values.extend(
+                statuses
+                    .iter()
+                    .map(|status| ("status".to_owned(), status.as_str().to_owned())),
+            );
+        }
+        push_string(&mut values, "created_from", self.created_from.as_deref());
+        push_string(&mut values, "created_to", self.created_to.as_deref());
+        Ok(values)
+    }
+}
+
+/// Read-only refund returned by the Merchant API. Monetary values remain strings.
+///
+/// ```compile_fail
+/// # fn example(mut refund: paymos::Refund) {
+/// refund.amount = "1".to_owned();
+/// # }
+/// ```
+#[derive(Clone, Debug, Deserialize)]
+pub struct Refund {
+    withdrawal_id: String,
+    invoice_id: String,
+    mode: RefundMode,
+    external_order_id: Option<String>,
+    status: WithdrawalStatus,
+    #[serde(default)]
+    is_final: bool,
+    #[serde(default)]
+    is_test: bool,
+    amount: String,
+    fee: Option<String>,
+    currency: String,
+    network: String,
+    first_sender: String,
+    destination_address: Option<String>,
+    #[serde(rename = "type")]
+    refund_type: Option<String>,
+    project_id: Option<String>,
+    tx_hash: Option<String>,
+    explorer_url: Option<String>,
+    created_at: i64,
+    completed_at: Option<i64>,
+    failed_at: Option<i64>,
+    cancelled_at: Option<i64>,
+}
+
+impl Refund {
+    /// Withdrawal identifier used for refund reads and simulation.
+    #[must_use]
+    pub fn withdrawal_id(&self) -> &str {
+        &self.withdrawal_id
+    }
+
+    /// Invoice that owns the refund.
+    #[must_use]
+    pub fn invoice_id(&self) -> &str {
+        &self.invoice_id
+    }
+
+    /// Accepted refund mode.
+    #[must_use]
+    pub const fn mode(&self) -> RefundMode {
+        self.mode
+    }
+
+    /// Merchant idempotency identifier, when supplied by the server.
+    #[must_use]
+    pub fn external_order_id(&self) -> Option<&str> {
+        self.external_order_id.as_deref()
+    }
+
+    /// Current withdrawal status.
+    #[must_use]
+    pub const fn status(&self) -> &WithdrawalStatus {
+        &self.status
+    }
+
+    /// Whether the server reports a terminal status.
+    #[must_use]
+    pub const fn is_final(&self) -> bool {
+        self.is_final
+    }
+
+    /// Whether the server reports a sandbox refund.
+    #[must_use]
+    pub const fn is_test(&self) -> bool {
+        self.is_test
+    }
+
+    /// Server-calculated dot-decimal amount.
+    #[must_use]
+    pub fn amount(&self) -> &str {
+        &self.amount
+    }
+
+    /// Server-calculated dot-decimal fee, when available.
+    #[must_use]
+    pub fn fee(&self) -> Option<&str> {
+        self.fee.as_deref()
+    }
+
+    /// Token currency.
+    #[must_use]
+    pub fn currency(&self) -> &str {
+        &self.currency
+    }
+
+    /// Network code.
+    #[must_use]
+    pub fn network(&self) -> &str {
+        &self.network
+    }
+
+    /// First deposit sender selected by the server as recipient.
+    #[must_use]
+    pub fn first_sender(&self) -> &str {
+        &self.first_sender
+    }
+
+    /// Recipient address, when supplied by the server.
+    #[must_use]
+    pub fn destination_address(&self) -> Option<&str> {
+        self.destination_address.as_deref()
+    }
+
+    /// Resource type, when supplied by the server.
+    #[must_use]
+    pub fn refund_type(&self) -> Option<&str> {
+        self.refund_type.as_deref()
+    }
+
+    /// Owning project, when supplied by the server.
+    #[must_use]
+    pub fn project_id(&self) -> Option<&str> {
+        self.project_id.as_deref()
+    }
+
+    /// Confirmed transaction hash, when available.
+    #[must_use]
+    pub fn tx_hash(&self) -> Option<&str> {
+        self.tx_hash.as_deref()
+    }
+
+    /// Public explorer URL, when available.
+    #[must_use]
+    pub fn explorer_url(&self) -> Option<&str> {
+        self.explorer_url.as_deref()
+    }
+
+    /// Creation timestamp in Unix seconds.
+    #[must_use]
+    pub const fn created_at(&self) -> i64 {
+        self.created_at
+    }
+
+    /// Completion timestamp in Unix seconds.
+    #[must_use]
+    pub const fn completed_at(&self) -> Option<i64> {
+        self.completed_at
+    }
+
+    /// Failure timestamp in Unix seconds.
+    #[must_use]
+    pub const fn failed_at(&self) -> Option<i64> {
+        self.failed_at
+    }
+
+    /// Cancellation timestamp in Unix seconds.
+    #[must_use]
+    pub const fn cancelled_at(&self) -> Option<i64> {
+        self.cancelled_at
+    }
+}
+
 /// Input for creating a payment channel.
 ///
 /// The pair `project_id` + `external_id` IS the idempotency key: repeating it

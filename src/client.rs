@@ -13,8 +13,8 @@ use crate::models::{
     Balance, CreateInvoiceRequest, CreatePaymentChannelRequest, CreateWithdrawalRequest,
     CursorPage, Invoice, InvoiceListItem, InvoiceListParams, InvoiceSimulationStage,
     PaymentChannel, PaymentChannelDeposit, PaymentChannelDepositFeedPage,
-    PaymentChannelDepositFeedParams, PaymentChannelListParams, ServerTime, SimulateDepositRequest,
-    Withdrawal, WithdrawalListParams,
+    PaymentChannelDepositFeedParams, PaymentChannelListParams, Refund, RefundListParams,
+    RefundMode, ServerTime, SimulateDepositRequest, Withdrawal, WithdrawalListParams,
 };
 use crate::signing::{authorization_header, build_query, encode_component};
 use crate::{Error, SDK_VERSION};
@@ -83,6 +83,12 @@ impl PaymosClient {
     #[must_use]
     pub const fn withdrawals(&self) -> Withdrawals<'_> {
         Withdrawals { client: self }
+    }
+
+    /// Accesses invoice refund operations.
+    #[must_use]
+    pub const fn refunds(&self) -> Refunds<'_> {
+        Refunds { client: self }
     }
 
     /// Accesses payment-channel operations.
@@ -454,6 +460,94 @@ impl Withdrawals<'_> {
             required_id(withdrawal_id)?
         );
         self.client.request_empty(Method::POST, &path, "").await
+    }
+}
+
+/// Invoice refund operations. Amounts and recipients are selected by the server.
+pub struct Refunds<'a> {
+    client: &'a PaymosClient,
+}
+
+impl Refunds<'_> {
+    /// Creates a refund, or returns the existing refund for the same key and mode.
+    ///
+    /// Reuse `external_order_id` after an unknown outcome. Changing its mode returns 409.
+    ///
+    /// ```compile_fail
+    /// # async fn example(client: paymos::PaymosClient) {
+    /// client.refunds().create("inv_1", paymos::RefundMode::Full, "key", "100").await;
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for serialization, transport, API, or response failures.
+    pub async fn create(
+        &self,
+        invoice_id: &str,
+        mode: RefundMode,
+        external_order_id: &str,
+    ) -> Result<Refund, Error> {
+        self.client
+            .request_json(
+                Method::POST,
+                "/v1/refunds",
+                "",
+                &CreateRefundRequest {
+                    invoice_id,
+                    mode,
+                    external_order_id,
+                },
+            )
+            .await
+    }
+
+    /// Simulates a sandbox refund with a terminal status.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for an invalid identifier or when the API call fails.
+    pub async fn simulate(&self, refund_id: &str, status: &str) -> Result<Refund, Error> {
+        let path = format!("/v1/sandbox/refunds/{}/simulate", required_id(refund_id)?);
+        self.client
+            .request_json(
+                Method::POST,
+                &path,
+                "",
+                &serde_json::json!({"status": status}),
+            )
+            .await
+    }
+
+    /// Gets a refund by its withdrawal identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when the identifier is invalid or the API call fails.
+    pub async fn get(&self, refund_id: &str) -> Result<Refund, Error> {
+        let path = format!("/v1/refunds/{}", required_id(refund_id)?);
+        self.client.request_empty(Method::GET, &path, "").await
+    }
+
+    /// Lists one refund page in the credential's project and environment scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when filters are invalid or the API call fails.
+    pub async fn list(&self, params: &RefundListParams) -> Result<CursorPage<Refund>, Error> {
+        let query = build_query(params.query_pairs()?)?;
+        self.client
+            .request_empty(Method::GET, "/v1/refunds", &query)
+            .await
+    }
+
+    /// Completes a sandbox refund.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for an invalid identifier or when the API call fails.
+    pub async fn simulate_completion(&self, refund_id: &str) -> Result<Refund, Error> {
+        self.simulate(refund_id, "completed").await
     }
 }
 
@@ -854,6 +948,13 @@ impl<'a> CancelRequest<'a> {
         }
         Ok(Self { reason })
     }
+}
+
+#[derive(Serialize)]
+struct CreateRefundRequest<'a> {
+    invoice_id: &'a str,
+    mode: RefundMode,
+    external_order_id: &'a str,
 }
 
 #[derive(Serialize)]
