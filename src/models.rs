@@ -85,8 +85,6 @@ pub struct CreateInvoiceRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network: Option<String>,
     /// Whether the invoice accepts multiple transfers.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allow_multiple_payments: Option<bool>,
     /// Optional customer-paid fee percentage.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub customer_fee_percent: Option<f64>,

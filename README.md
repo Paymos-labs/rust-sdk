@@ -39,7 +39,6 @@ async fn main() -> Result<(), paymos::Error> {
             currency: "USD".to_owned(),
             external_order_id: "order_123".to_owned(),
             network: None,
-            allow_multiple_payments: None,
             customer_fee_percent: None,
             client_id: None,
         })
