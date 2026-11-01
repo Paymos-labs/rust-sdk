@@ -1,6 +1,6 @@
 {
   "source_repository": "shockk73/paymos",
   "source_path": "plugins/rust-sdk",
-  "source_commit": "8d7414a6a6b0a97c5e5d4d776c65051c24191647",
-  "version": "1.4.0"
+  "source_commit": "8d0835bc24374bd74138ead4cdd6a963c1288908",
+  "version": "1.4.1"
 }

@@ -275,7 +275,6 @@ async fn complete_resource_matrix_uses_the_frozen_routes() {
             currency: "USD".to_owned(),
             external_order_id: "order_1".to_owned(),
             network: None,
-            allow_multiple_payments: None,
             customer_fee_percent: None,
             client_id: None,
         })
@@ -362,7 +361,6 @@ async fn retries_429_post_but_not_503_post() {
         currency: "USD".to_owned(),
         external_order_id: "order_1".to_owned(),
         network: None,
-        allow_multiple_payments: None,
         customer_fee_percent: None,
         client_id: None,
     };
@@ -477,7 +475,6 @@ async fn mutating_transport_failure_is_never_retried() {
             currency: "USD".to_owned(),
             external_order_id: "order_1".to_owned(),
             network: None,
-            allow_multiple_payments: None,
             customer_fee_percent: None,
             client_id: None,
         })
