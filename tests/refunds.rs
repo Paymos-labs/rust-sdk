@@ -205,7 +205,7 @@ fn assert_request(request: &str, method: &str, target: &str, expected_body: &Val
     );
     let (_, body) = request.split_once("\r\n\r\n").unwrap();
     if expected_body.is_null() {
-        assert!(body.is_empty());
+        assert_eq!(body, "");
     } else {
         assert_eq!(serde_json::from_str::<Value>(body).unwrap(), *expected_body);
         assert_eq!(header(request, "content-type"), "application/json");
@@ -451,7 +451,7 @@ async fn changed_mode_for_the_same_key_is_a_structured_409() {
         "conflict",
     );
     assert_eq!(error.field.as_deref(), Some("external_order_id"));
-    assert!(error.errors.is_empty());
+    assert_eq!(error.errors.len(), 0);
     let requests = server.raw_requests().await;
     assert_eq!(requests.len(), 2);
     let mut changed = vectors()["create"]["body"].clone();

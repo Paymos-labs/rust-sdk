@@ -4,6 +4,13 @@ All notable changes to the official Paymos Rust SDK are documented here.
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-11-03
+
+- fix(rust-sdk,qa): resolve clippy assert_is_empty in refunds tests and record Adobe v1.7.0 / WHMCS v1.5.4 submissions
+
+- **403 is no longer reported as an authentication failure.** `ApiErrorKind::Permission` is a new variant beside `Authentication`. The enum is `#[non_exhaustive]`, so an existing `match` still compiles.
+- **Base URL must use HTTPS.** Plain HTTP is accepted only against a loopback host, which is what a local integration test points at. The API secret signs every request, so a plaintext base URL put that credential on the wire.
+
 ## [1.4.3] - 2026-11-03
 
 - fix(plugins): update php-sdk pin in PrestaShop/Drupal CI and fix clippy struct_field_names in Rust SDK
