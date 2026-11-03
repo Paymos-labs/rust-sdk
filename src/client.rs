@@ -502,23 +502,6 @@ impl Refunds<'_> {
             .await
     }
 
-    /// Simulates a sandbox refund with a terminal status.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error`] for an invalid identifier or when the API call fails.
-    pub async fn simulate(&self, refund_id: &str, status: &str) -> Result<Refund, Error> {
-        let path = format!("/v1/sandbox/refunds/{}/simulate", required_id(refund_id)?);
-        self.client
-            .request_json(
-                Method::POST,
-                &path,
-                "",
-                &serde_json::json!({"status": status}),
-            )
-            .await
-    }
-
     /// Gets a refund by its withdrawal identifier.
     ///
     /// # Errors
@@ -542,6 +525,29 @@ impl Refunds<'_> {
     }
 
     /// Completes a sandbox refund.
+    /// Sets a terminal sandbox refund status using the scoped Payment credential.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for an invalid identifier, status, or failed API call.
+    pub async fn simulate(&self, refund_id: &str, status: &str) -> Result<Refund, Error> {
+        if !matches!(status, "completed" | "failed" | "cancelled") {
+            return Err(Error::InvalidArgument(
+                "A terminal refund simulation status is required".into(),
+            ));
+        }
+        let path = format!("/v1/sandbox/refunds/{}/simulate", required_id(refund_id)?);
+        self.client
+            .request_json(
+                Method::POST,
+                &path,
+                "",
+                &serde_json::json!({ "status": status }),
+            )
+            .await
+    }
+
+    /// Completes a sandbox refund through its scoped refund simulator.
     ///
     /// # Errors
     ///

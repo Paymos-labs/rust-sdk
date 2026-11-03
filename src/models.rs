@@ -432,6 +432,10 @@ impl RefundListParams {
 /// ```
 #[derive(Clone, Debug, Deserialize)]
 pub struct Refund {
+    #[serde(default, rename = "type")]
+    refund_type: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
     withdrawal_id: String,
     invoice_id: String,
     mode: RefundMode,
@@ -447,9 +451,6 @@ pub struct Refund {
     network: String,
     first_sender: String,
     destination_address: Option<String>,
-    #[serde(rename = "type")]
-    refund_type: Option<String>,
-    project_id: Option<String>,
     tx_hash: Option<String>,
     explorer_url: Option<String>,
     created_at: i64,
@@ -459,6 +460,18 @@ pub struct Refund {
 }
 
 impl Refund {
+    /// Wire discriminator identifying a refund rather than an ordinary payout.
+    #[must_use]
+    pub fn refund_type(&self) -> Option<&str> {
+        self.refund_type.as_deref()
+    }
+
+    /// Owning project read from the persisted invoice.
+    #[must_use]
+    pub fn project_id(&self) -> Option<&str> {
+        self.project_id.as_deref()
+    }
+
     /// Withdrawal identifier used for refund reads and simulation.
     #[must_use]
     pub fn withdrawal_id(&self) -> &str {
@@ -535,18 +548,6 @@ impl Refund {
     #[must_use]
     pub fn destination_address(&self) -> Option<&str> {
         self.destination_address.as_deref()
-    }
-
-    /// Resource type, when supplied by the server.
-    #[must_use]
-    pub fn refund_type(&self) -> Option<&str> {
-        self.refund_type.as_deref()
-    }
-
-    /// Owning project, when supplied by the server.
-    #[must_use]
-    pub fn project_id(&self) -> Option<&str> {
-        self.project_id.as_deref()
     }
 
     /// Confirmed transaction hash, when available.

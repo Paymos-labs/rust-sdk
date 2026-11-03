@@ -1,20 +1,19 @@
-//! Signed schema 1 TON webhook envelopes with raw and friendly addresses.
+//! Signed historical and new TON webhook envelopes across SDKs.
 
 use paymos::{WebhookEvent, WebhookVerifier};
 use serde_json::Value;
 
 #[test]
-fn signed_ton_webhook_raw_and_friendly_v1_preserve_fields() {
+fn signed_ton_webhook_versions_preserve_fields() {
     let contract: Value =
         serde_json::from_str(include_str!("../conformance/contract.json")).unwrap();
     let fixtures = &contract["vectors"]["ton_webhooks"];
     let vectors = fixtures["vectors"].as_array().unwrap();
-    assert_eq!(vectors.len(), 8);
+    assert_eq!(vectors.len(), 16);
     let now = fixtures["now"].as_i64().unwrap();
     let verifier = WebhookVerifier::new(fixtures["secret"].as_str().unwrap()).unwrap();
 
     for vector in vectors {
-        assert_eq!(vector["version"].as_u64(), Some(1));
         let body = vector["raw_body"].as_str().unwrap();
         let header = vector["header"].as_str().unwrap();
         let event: WebhookEvent<Value> = verifier

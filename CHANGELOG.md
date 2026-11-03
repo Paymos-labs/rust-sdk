@@ -4,6 +4,16 @@ All notable changes to the official Paymos Rust SDK are documented here.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-11-03
+
+- fix(sdk): resolve preflight lint and conformance vector count for autorelease
+- wip: snapshot shared working tree before merging main
+- fix(merge): keep both sides for 126 conflicting files (union / semantic JSON merge); Balance.razor keeps ClickToCopy ID column
+- wip(refunds): merchant refund plugin work (CMS adapters, PHP SDK, tests) - unverified WIP snapshot
+
+- **403 is no longer reported as an authentication failure.** `ApiErrorKind::Permission` is a new variant beside `Authentication`. The enum is `#[non_exhaustive]`, so an existing `match` still compiles.
+- **Base URL must use HTTPS.** Plain HTTP is accepted only against a loopback host, which is what a local integration test points at. The API secret signs every request, so a plaintext base URL put that credential on the wire.
+
 ## [1.4.1] - 2026-11-01
 
 - refactor(invoices): remove the multiple-payment toggle

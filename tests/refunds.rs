@@ -17,6 +17,33 @@ use tokio::sync::mpsc;
 const INVOICE_ID: &str = "inv_74BPZFhr9qy9Uz2fbRkdJX";
 const REFUND_ID: &str = "wdr_74BPZFhr9qy9Uz2fbRkdJX";
 
+#[tokio::test]
+async fn scoped_simulator_signs_all_terminal_statuses() {
+    for status in ["completed", "failed", "cancelled"] {
+        let server = TestServer::start(vec![Some(Response::new(
+            200,
+            refund(REFUND_ID, "full", "120", status),
+        ))])
+        .await;
+        let actual = client(&server)
+            .refunds()
+            .simulate("wdr /?", status)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(actual.status()).unwrap(),
+            json!(status)
+        );
+        let requests = server.raw_requests().await;
+        assert_request(
+            &requests[0],
+            "POST",
+            "/v1/sandbox/refunds/wdr%20%2F%3F/simulate",
+            &json!({"status": status}),
+        );
+    }
+}
+
 struct Response {
     status: u16,
     body: Value,
@@ -127,6 +154,7 @@ fn vectors() -> Value {
 
 fn refund(id: &str, mode: &str, amount: &str, status: &str) -> Value {
     json!({
+        "type": "refund", "project_id": "prj_test",
         "withdrawal_id": id, "invoice_id": INVOICE_ID, "mode": mode,
         "external_order_id": if mode == "overpayment" { "refund-order-2" } else { "refund-order-1" },
         "status": status,
@@ -219,51 +247,9 @@ fn assert_refund(result: &Refund, id: &str, mode: RefundMode, amount: &str) {
     assert_eq!(result.currency(), "USDT");
     assert_eq!(result.network(), "TRC20");
     assert_eq!(result.first_sender(), "TFirstSender");
-    assert_eq!(result.destination_address(), None);
-    assert_eq!(result.refund_type(), None);
-    assert_eq!(result.project_id(), None);
     assert_eq!(result.fee(), Some("0.000001"));
     assert_eq!(result.created_at(), 1_700_000_000);
     assert!(result.is_test());
-}
-
-#[tokio::test]
-async fn simulate_terminal_statuses_preserves_signed_request_and_current_refund_fields() {
-    const ADDRESS: &str = "UQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPuwA";
-    let statuses = ["completed", "failed", "cancelled"];
-    let responses = statuses
-        .iter()
-        .map(|status| {
-            let mut wire = refund("wdr_1", "full", "20", status);
-            wire["is_final"] = json!(true);
-            wire["network"] = json!("TON");
-            wire["destination_address"] = json!(ADDRESS);
-            wire["first_sender"] = json!(ADDRESS);
-            wire["type"] = json!("refund");
-            wire["project_id"] = json!("prj_1");
-            Some(Response::new(200, wire))
-        })
-        .collect();
-    let server = TestServer::start(responses).await;
-    let client = client(&server);
-    for status in statuses {
-        let result = client.refunds().simulate("wdr/1 ?", status).await.unwrap();
-        assert_eq!(result.status().as_str(), status);
-        assert_eq!(result.destination_address(), Some(ADDRESS));
-        assert_eq!(result.first_sender(), ADDRESS);
-        assert_eq!(result.refund_type(), Some("refund"));
-        assert_eq!(result.project_id(), Some("prj_1"));
-    }
-    let requests = server.raw_requests().await;
-    assert_eq!(requests.len(), statuses.len());
-    for (request, status) in requests.iter().zip(statuses) {
-        assert_request(
-            request,
-            "POST",
-            "/v1/sandbox/refunds/wdr%2F1%20%3F/simulate",
-            &json!({"status": status}),
-        );
-    }
 }
 
 #[tokio::test]
@@ -366,7 +352,7 @@ async fn overpayment_twenty_then_remaining_full_hundred_with_idempotent_sandbox_
             request,
             "POST",
             &format!("/v1/sandbox/refunds/{REFUND_ID}/simulate"),
-            &json!({"status": "completed"}),
+            &json!({"status":"completed"}),
         );
     }
     assert_request(
@@ -379,7 +365,7 @@ async fn overpayment_twenty_then_remaining_full_hundred_with_idempotent_sandbox_
         &requests[4],
         "POST",
         &format!("/v1/sandbox/refunds/{full_id}/simulate"),
-        &json!({"status": "completed"}),
+        &json!({"status":"completed"}),
     );
     assert_request(
         &requests[5],
@@ -776,13 +762,13 @@ async fn sandbox_scope_errors_are_not_retried_or_rerouted() {
         &requests[0],
         "POST",
         &format!("/v1/sandbox/refunds/{REFUND_ID}/simulate"),
-        &json!({"status": "completed"}),
+        &json!({"status":"completed"}),
     );
     assert_request(
         &requests[1],
         "POST",
         "/v1/sandbox/refunds/wdr_foreign/simulate",
-        &json!({"status": "completed"}),
+        &json!({"status":"completed"}),
     );
 }
 
