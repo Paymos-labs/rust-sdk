@@ -433,7 +433,7 @@ impl RefundListParams {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Refund {
     #[serde(default, rename = "type")]
-    refund_type: Option<String>,
+    wire_type: Option<String>,
     #[serde(default)]
     project_id: Option<String>,
     withdrawal_id: String,
@@ -463,7 +463,7 @@ impl Refund {
     /// Wire discriminator identifying a refund rather than an ordinary payout.
     #[must_use]
     pub fn refund_type(&self) -> Option<&str> {
-        self.refund_type.as_deref()
+        self.wire_type.as_deref()
     }
 
     /// Owning project read from the persisted invoice.
