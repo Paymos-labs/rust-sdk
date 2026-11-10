@@ -4,6 +4,12 @@ All notable changes to the official Paymos Rust SDK are documented here.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-10
+
+- fix(rust-sdk): satisfy formatting checks for fee percent
+- feat(notifications): rewrite all 71 email and 52 Telegram RU templates, lifecycle series, and R01-R34 audit fixes
+- docs(sdk): backfill published mirror changelogs across SDKs and MCP
+
 ## [1.4.4] - 2026-11-03
 
 - fix(rust-sdk,qa): resolve clippy assert_is_empty in refunds tests and record Adobe v1.7.0 / WHMCS v1.5.4 submissions

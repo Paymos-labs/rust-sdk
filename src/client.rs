@@ -277,6 +277,14 @@ impl Invoices<'_> {
     ///
     /// Returns [`Error`] for serialization, transport, API, or response failures.
     pub async fn create(&self, request: &CreateInvoiceRequest) -> Result<Invoice, Error> {
+        if request
+            .customer_fee_percent
+            .is_some_and(|percent| percent > 100)
+        {
+            return Err(Error::InvalidArgument(
+                "customer_fee_percent must be between 0 and 100".to_owned(),
+            ));
+        }
         self.client
             .request_json(Method::POST, "/v1/invoices", "", request)
             .await
