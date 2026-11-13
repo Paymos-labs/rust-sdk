@@ -4,6 +4,10 @@ All notable changes to the official Paymos Rust SDK are documented here.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-13
+
+- fix(plugins,publicweb): SDK webhook credit recipes, CMS recovery, redirects and CSP logs (audit 2026-11-13)
+
 ## [1.5.0] - 2026-11-10
 
 - fix(rust-sdk): satisfy formatting checks for fee percent

@@ -120,7 +120,8 @@ A channel is one payer's reusable set of deposit addresses. Create it, read its
 rails, then poll the confirmed-deposit feed and persist the cursor it returns.
 
 ```rust,no_run
-# use paymos::{CreatePaymentChannelRequest, PaymentChannelDepositFeedParams, PaymosClient};
+# use paymos::{CreatePaymentChannelRequest, PaymentChannelDeposit, PaymentChannelDepositFeedParams, PaymosClient};
+# fn credit_deposit(_deposit: &PaymentChannelDeposit) {}
 # async fn example(paymos: PaymosClient, saved_cursor: Option<String>) -> Result<(), paymos::Error> {
 let channel = paymos
     .payment_channels()
@@ -144,7 +145,7 @@ let feed = paymos
     .await?;
 
 for deposit in &feed.items {
-    println!("{} {} {}", deposit.id, deposit.currency, deposit.net);
+    credit_deposit(deposit); // one credit per deposit.id, shared with the webhook
 }
 
 // Persist this and pass it back as `cursor` on the next poll.
@@ -238,18 +239,30 @@ as their payload, so pass it as the type parameter:
 
 ```rust,no_run
 # use paymos::{PaymentChannelDeposit, WebhookEvent, WebhookVerifier};
-# fn credit(_payer: &str, _net: &str) {}
+# fn credit_deposit(_deposit: &PaymentChannelDeposit) {}
 # fn example(signature: &str, raw_body: &[u8]) -> Result<(), paymos::WebhookError> {
 # let verifier = WebhookVerifier::new("whsec_x")?;
 let event: WebhookEvent<PaymentChannelDeposit> = verifier.construct_event(signature, raw_body)?;
 
 if event.event_type == "payment_channel.deposit.confirmed" && event.data.is_final {
-    // Idempotent by event.event_id.
-    credit(&event.data.payment_channel_external_id, &event.data.net);
+    credit_deposit(&event.data); // once per event.data.id, shared with the feed
 }
 # Ok(())
 # }
 ```
+
+The feed and the deposit webhook report the same deposits, so both go through one
+`credit_deposit` keyed by the deposit's own `id` (`pcd_...`). Check `project_id` and
+`is_test` against your configuration, then in one database transaction insert `id` into a
+table where it is the primary key (`INSERT ... ON CONFLICT (deposit_id) DO NOTHING` in
+PostgreSQL) and add `net` to the payer's balance only when that insert added a row. A
+second delivery, a second endpoint's copy, or a re-read feed page then inserts nothing.
+
+`event.event_id` identifies one delivery, not one payment. Paymos creates a separate
+event, with its own `event_id`, for every webhook endpoint subscribed to the event, and
+every later event about the same invoice or deposit has its own `event_id` too. Store
+`event_id` to skip a redelivered request, but key money and fulfilment on the business
+identity: the invoice/order for invoice events, the deposit `id` for deposit events.
 
 **`confirming` and `reorged` are advisory and may arrive out of order.** A `confirming`
 can land after the `confirmed` for the same deposit, and a `reorged` can be superseded by
