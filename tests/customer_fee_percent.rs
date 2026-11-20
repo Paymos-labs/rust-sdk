@@ -10,6 +10,7 @@ fn request(percent: Option<u8>) -> CreateInvoiceRequest {
         network: None,
         customer_fee_percent: percent,
         client_id: None,
+        products: None,
     }
 }
 

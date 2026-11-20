@@ -22,7 +22,7 @@ cargo add paymos
 ## Create an invoice
 
 ```rust,no_run
-use paymos::{CreateInvoiceRequest, PaymosClient};
+use paymos::{CreateInvoiceRequest, InvoiceProduct, PaymosClient};
 
 #[tokio::main]
 async fn main() -> Result<(), paymos::Error> {
@@ -31,6 +31,7 @@ async fn main() -> Result<(), paymos::Error> {
         std::env::var("PAYMOS_API_SECRET").expect("PAYMOS_API_SECRET is required"),
     )?;
 
+    // Compatible amount-only call (products omitted on wire via None)
     let invoice = paymos
         .invoices()
         .create(&CreateInvoiceRequest {
@@ -41,6 +42,7 @@ async fn main() -> Result<(), paymos::Error> {
             network: None,
             customer_fee_percent: None,
             client_id: None,
+            products: None,
         })
         .await?;
 
@@ -51,6 +53,80 @@ async fn main() -> Result<(), paymos::Error> {
 
 Money is always passed and returned as a dot-decimal `String`; do not convert it
 through binary floating point.
+
+### Product line items (`products[]`)
+
+Pass `products: Some(vec![...])` (`1..=50` `paymos::InvoiceProduct` items) to display purchase context on hosted checkout, or `products: None` for a compatible `amount-only` invoice. Each `InvoiceProduct` requires `title` (<= 200 Unicode scalar values), positive `u32` `quantity` (`1..=2_147_483_647`), and decimal `String` `unit_amount` (in the invoice currency); optional `description` (plain text, <= 2000 scalars) is an `Option<String>` and is omitted on the wire when `None`.
+
+```rust,no_run
+# use paymos::{CreateInvoiceRequest, InvoiceProduct, PaymosClient};
+# async fn example(paymos: PaymosClient) -> Result<(), paymos::Error> {
+// 1-item invoice with optional description
+let studio_pro = InvoiceProduct {
+    title: "Studio Pro".to_owned(),
+    description: Some("One-month access".to_owned()),
+    quantity: 2,
+    unit_amount: "24.50".to_owned(),
+};
+
+let single_invoice = paymos
+    .invoices()
+    .create(&CreateInvoiceRequest {
+        project_id: "prj_xxxxxxxxxxxx".to_owned(),
+        amount: "47.00".to_owned(),
+        currency: "USD".to_owned(),
+        external_order_id: "order_product_single".to_owned(),
+        network: None,
+        customer_fee_percent: None,
+        client_id: None,
+        products: Some(vec![studio_pro.clone()]),
+    })
+    .await?;
+
+// Multi-item cart including a minimal 3-field item on the wire (description: None)
+let cart_invoice = paymos
+    .invoices()
+    .create(&CreateInvoiceRequest {
+        project_id: "prj_xxxxxxxxxxxx".to_owned(),
+        amount: "59.00".to_owned(),
+        currency: "USD".to_owned(),
+        external_order_id: "order_product_multi".to_owned(),
+        network: None,
+        customer_fee_percent: None,
+        client_id: None,
+        products: Some(vec![
+            studio_pro,
+            InvoiceProduct {
+                title: "Priority Support".to_owned(),
+                description: None,
+                quantity: 1,
+                unit_amount: "12.00".to_owned(),
+            },
+        ]),
+    })
+    .await?;
+
+if let Some(items) = &cart_invoice.order.products {
+    for item in items {
+        println!("{} x{} @ {}", item.title, item.quantity, item.unit_amount);
+    }
+}
+# let _ = single_invoice;
+# Ok(())
+# }
+```
+
+- **Authoritative `amount`:** `amount` is the exact order total and is never recomputed from `sum(quantity * unit_amount)`.
+- **First-success replay:** the first successful create freezes `order.products` on the invoice. Replaying the same `external_order_id` with unchanged `(amount, currency, network)` returns HTTP 200 with the original `Invoice` and `order.products`, even if `products` changed; changing `(amount, currency, network)` returns `Error::Api` with HTTP `409` (`invoice_idempotency_conflict`). Legacy and `amount-only` invoices return `order.products == None`.
+- **Webhooks:** signed invoice webhooks omit `products`.
+
+### Upgrading from `1.x` to `2.0.0` (breaking change)
+
+`paymos` `2.0.0` (`SDK_VERSION = "2.0.0"`) adds `pub products: Option<Vec<InvoiceProduct>>` to `CreateInvoiceRequest` and `Order`. Because `CreateInvoiceRequest` and `Order` have public fields and do not implement `Default`, this is a breaking source change for struct literals and exhaustive struct patterns:
+
+- Add `products: None` to existing `CreateInvoiceRequest { ... }` struct literals to keep the exact compatible `amount-only` request behavior.
+- Add `products` (or `..`) when constructing or pattern-matching `paymos::Order`.
+- Existing `1.x` clients remain wire-compatible with the server for `amount-only` invoices.
 
 ## Cursor pagination
 

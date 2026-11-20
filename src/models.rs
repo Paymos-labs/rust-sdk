@@ -70,6 +70,20 @@ extensible_status!(WithdrawalStatus {
     Cancelled => "cancelled",
 });
 
+/// Line item displayed on the checkout summary for an invoice.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct InvoiceProduct {
+    /// Non-empty item title (up to 200 Unicode scalar values).
+    pub title: String,
+    /// Optional plain-text item description (omitted on wire when `None`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Positive item quantity (`1..=2_147_483_647`).
+    pub quantity: u32,
+    /// Dot-decimal unit price in the order currency.
+    pub unit_amount: String,
+}
+
 /// Input for creating an invoice. Monetary amounts stay decimal strings.
 #[derive(Clone, Debug, Serialize)]
 pub struct CreateInvoiceRequest {
@@ -90,6 +104,9 @@ pub struct CreateInvoiceRequest {
     /// Optional merchant customer identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// Optional product line items (`1..=50`) shown on the checkout summary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub products: Option<Vec<InvoiceProduct>>,
 }
 
 /// Filters accepted by the invoice list endpoint.
@@ -153,6 +170,9 @@ pub struct Order {
     pub currency: String,
     /// Selected network, when known.
     pub network: Option<String>,
+    /// Product line items frozen on the invoice at creation, when supplied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub products: Option<Vec<InvoiceProduct>>,
 }
 
 /// Blockchain transfer contributing to an invoice.

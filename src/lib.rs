@@ -18,12 +18,12 @@ pub use client::{
 pub use error::{ApiError, ApiErrorKind, Error, ProblemError};
 pub use models::{
     Balance, CreateInvoiceRequest, CreatePaymentChannelRequest, CreateWithdrawalRequest,
-    CursorPage, Invoice, InvoiceListItem, InvoiceListParams, InvoiceSimulationStage, InvoiceStatus,
-    Order, Payment, PaymentChannel, PaymentChannelDeposit, PaymentChannelDepositFeedBlockage,
-    PaymentChannelDepositFeedPage, PaymentChannelDepositFeedParams, PaymentChannelListParams,
-    PaymentChannelNetwork, PaymentChannelToken, Refund, RefundListParams, RefundMode, ServerTime,
-    SimulateDepositRequest, SimulateDepositStage, Transfer, Withdrawal, WithdrawalListParams,
-    WithdrawalStatus,
+    CursorPage, Invoice, InvoiceListItem, InvoiceListParams, InvoiceProduct,
+    InvoiceSimulationStage, InvoiceStatus, Order, Payment, PaymentChannel, PaymentChannelDeposit,
+    PaymentChannelDepositFeedBlockage, PaymentChannelDepositFeedPage,
+    PaymentChannelDepositFeedParams, PaymentChannelListParams, PaymentChannelNetwork,
+    PaymentChannelToken, Refund, RefundListParams, RefundMode, ServerTime, SimulateDepositRequest,
+    SimulateDepositStage, Transfer, Withdrawal, WithdrawalListParams, WithdrawalStatus,
 };
 pub use version::SDK_VERSION;
 pub use webhook::{WebhookError, WebhookEvent, WebhookVerifier};

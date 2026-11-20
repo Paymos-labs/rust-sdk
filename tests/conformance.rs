@@ -1,5 +1,6 @@
 //! Cross-language contract, route, retry, pagination, and webhook tests.
 
+use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -8,10 +9,10 @@ use std::time::Duration;
 use paymos::signing::{authorization_header, build_query, sign, string_to_sign};
 use paymos::{
     ApiErrorKind, CreateInvoiceRequest, CreatePaymentChannelRequest, CreateWithdrawalRequest,
-    Error, InvoiceListParams, InvoiceSimulationStage, InvoiceStatus,
+    Error, Invoice, InvoiceListParams, InvoiceProduct, InvoiceSimulationStage, InvoiceStatus,
     PaymentChannelDepositFeedParams, PaymentChannelListParams, PaymosClient,
     SimulateDepositRequest, SimulateDepositStage, WebhookError, WebhookEvent, WebhookVerifier,
-    WithdrawalListParams,
+    WithdrawalListParams, SDK_VERSION,
 };
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -58,7 +59,7 @@ struct WebhookVector {
 struct Response {
     status: u16,
     headers: Vec<(&'static str, &'static str)>,
-    body: &'static str,
+    body: Cow<'static, str>,
 }
 
 impl Response {
@@ -66,7 +67,15 @@ impl Response {
         Self {
             status: 200,
             headers: Vec::new(),
-            body,
+            body: Cow::Borrowed(body),
+        }
+    }
+
+    fn created_json(value: &serde_json::Value) -> Self {
+        Self {
+            status: 201,
+            headers: Vec::new(),
+            body: Cow::Owned(value.to_string()),
         }
     }
 }
@@ -277,6 +286,7 @@ async fn complete_resource_matrix_uses_the_frozen_routes() {
             network: None,
             customer_fee_percent: None,
             client_id: None,
+            products: None,
         })
         .await
         .unwrap();
@@ -363,12 +373,15 @@ async fn retries_429_post_but_not_503_post() {
         network: None,
         customer_fee_percent: None,
         client_id: None,
+        products: None,
     };
     let retry_server = TestServer::start(vec![
         Response {
             status: 429,
             headers: vec![("Retry-After", "0")],
-            body: r#"{"type":"about:blank","title":"Too Many Requests","status":429,"detail":"slow down","code":"rate_limited"}"#,
+            body: Cow::Borrowed(
+                r#"{"type":"about:blank","title":"Too Many Requests","status":429,"detail":"slow down","code":"rate_limited"}"#,
+            ),
         },
         Response::ok(INVOICE),
     ])
@@ -385,7 +398,9 @@ async fn retries_429_post_but_not_503_post() {
     let no_retry_server = TestServer::start(vec![Response {
         status: 503,
         headers: Vec::new(),
-        body: r#"{"type":"about:blank","title":"Service Unavailable","status":503,"detail":"retry later","code":"unavailable"}"#,
+        body: Cow::Borrowed(
+            r#"{"type":"about:blank","title":"Service Unavailable","status":503,"detail":"retry later","code":"unavailable"}"#,
+        ),
     }])
     .await;
     let client = PaymosClient::builder("pk", "sk")
@@ -412,7 +427,7 @@ async fn problem_details_uses_top_level_code_and_rejects_status_mismatch() {
     let server = TestServer::start(vec![Response {
         status: 400,
         headers: Vec::new(),
-        body: MULTI,
+        body: Cow::Borrowed(MULTI),
     }])
     .await;
     let client = PaymosClient::builder("pk", "sk")
@@ -432,7 +447,7 @@ async fn problem_details_uses_top_level_code_and_rejects_status_mismatch() {
     let server = TestServer::start(vec![Response {
         status: 400,
         headers: Vec::new(),
-        body: MISMATCHED,
+        body: Cow::Borrowed(MISMATCHED),
     }])
     .await;
     let client = PaymosClient::builder("pk", "sk")
@@ -477,6 +492,7 @@ async fn mutating_transport_failure_is_never_retried() {
             network: None,
             customer_fee_percent: None,
             client_id: None,
+            products: None,
         })
         .await
         .unwrap_err();
@@ -542,7 +558,7 @@ const fn created(body: &'static str) -> Response {
     Response {
         status: 201,
         headers: Vec::new(),
-        body,
+        body: Cow::Borrowed(body),
     }
 }
 
@@ -859,6 +875,175 @@ async fn the_channel_pager_terminates_on_a_null_cursor() {
             "GET /v1/payment-channels?cursor=cur_2",
         ]
     );
+}
+
+fn header_value<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+    let head = request.split_once("\r\n\r\n").map_or(request, |(h, _)| h);
+    head.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.eq_ignore_ascii_case(name).then(|| value.trim())
+    })
+}
+
+fn product_from_json(value: &serde_json::Value) -> InvoiceProduct {
+    InvoiceProduct {
+        title: value["title"].as_str().unwrap().to_owned(),
+        description: value
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        quantity: u32::try_from(value["quantity"].as_u64().unwrap()).unwrap(),
+        unit_amount: value["unit_amount"].as_str().unwrap().to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn sdk_version_and_user_agent_match_major_release() {
+    assert_eq!(SDK_VERSION, env!("CARGO_PKG_VERSION"));
+    let major: u64 = SDK_VERSION
+        .split('.')
+        .next()
+        .expect("semver major")
+        .parse()
+        .expect("numeric major");
+    assert!(
+        major >= 2,
+        "expected Rust SDK major >= 2, got {SDK_VERSION}"
+    );
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../conformance/contract.json")).unwrap();
+    let prefix = contract["user_agent_prefix"].as_str().unwrap();
+
+    let server = TestServer::start(vec![Response::ok(r#"{"server_time":1700000000}"#)]).await;
+    let client = test_client(&server.base_url);
+    client.system().time().await.unwrap();
+
+    let requests = server.raw_requests().await;
+    assert_eq!(
+        header_value(&requests[0], "user-agent"),
+        Some(format!("{prefix}rust/{SDK_VERSION}").as_str())
+    );
+}
+
+#[tokio::test]
+async fn invoice_products_single_and_multi_item_conformance() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../conformance/contract.json")).unwrap();
+    let single = &contract["vectors"]["invoices"]["create_single_product"];
+    let multi = &contract["vectors"]["invoices"]["create_multi_product"];
+
+    let server = TestServer::start(vec![
+        Response::created_json(&single["response"]),
+        Response::created_json(&multi["response"]),
+    ])
+    .await;
+    let client = test_client(&server.base_url);
+
+    let single_body = &single["body"];
+    let single_product = product_from_json(&single_body["products"][0]);
+    let single_invoice = client
+        .invoices()
+        .create(&CreateInvoiceRequest {
+            project_id: single_body["project_id"].as_str().unwrap().to_owned(),
+            amount: single_body["amount"].as_str().unwrap().to_owned(),
+            currency: single_body["currency"].as_str().unwrap().to_owned(),
+            external_order_id: single_body["external_order_id"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            network: None,
+            customer_fee_percent: None,
+            client_id: None,
+            products: Some(vec![single_product.clone()]),
+        })
+        .await
+        .unwrap();
+    assert_eq!(single_invoice.order.amount, "47.00");
+    assert_eq!(single_invoice.order.products, Some(vec![single_product]));
+
+    let multi_body = &multi["body"];
+    let multi_products: Vec<InvoiceProduct> = multi_body["products"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(product_from_json)
+        .collect();
+    let multi_invoice = client
+        .invoices()
+        .create(&CreateInvoiceRequest {
+            project_id: multi_body["project_id"].as_str().unwrap().to_owned(),
+            amount: multi_body["amount"].as_str().unwrap().to_owned(),
+            currency: multi_body["currency"].as_str().unwrap().to_owned(),
+            external_order_id: multi_body["external_order_id"].as_str().unwrap().to_owned(),
+            network: None,
+            customer_fee_percent: None,
+            client_id: None,
+            products: Some(multi_products.clone()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(multi_invoice.order.amount, "59.00");
+    assert_eq!(multi_invoice.order.products, Some(multi_products));
+
+    let requests = server.raw_requests().await;
+    let sent_single = request_body(&requests[0]);
+    assert_eq!(&sent_single, single_body);
+    let full_item = sent_single["products"][0].as_object().unwrap();
+    assert_eq!(full_item.len(), 4);
+    assert!(!full_item.contains_key("image_url"));
+    let sent_multi = request_body(&requests[1]);
+    assert_eq!(&sent_multi, multi_body);
+    let minimal_item = sent_multi["products"][1].as_object().unwrap();
+    assert!(!minimal_item.contains_key("description"));
+    assert!(!minimal_item.contains_key("image_url"));
+}
+
+#[tokio::test]
+async fn invoice_products_legacy_and_null_responses_decode_cleanly() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../conformance/contract.json")).unwrap();
+    let legacy = &contract["vectors"]["invoices"]["legacy_without_products"];
+    let null_products = &contract["vectors"]["invoices"]["null_products"];
+
+    let server = TestServer::start(vec![
+        Response::created_json(&legacy["response"]),
+        Response::created_json(&null_products["response"]),
+    ])
+    .await;
+    let client = test_client(&server.base_url);
+
+    let legacy_body = &legacy["body"];
+    let legacy_invoice = client
+        .invoices()
+        .create(&CreateInvoiceRequest {
+            project_id: legacy_body["project_id"].as_str().unwrap().to_owned(),
+            amount: legacy_body["amount"].as_str().unwrap().to_owned(),
+            currency: legacy_body["currency"].as_str().unwrap().to_owned(),
+            external_order_id: legacy_body["external_order_id"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            network: None,
+            customer_fee_percent: None,
+            client_id: None,
+            products: None,
+        })
+        .await
+        .unwrap();
+    assert!(legacy_invoice.order.products.is_none());
+
+    let fetched_null = client.invoices().get("inv_null_1").await.unwrap();
+    assert!(fetched_null.order.products.is_none());
+
+    let mut explicit_null_response = null_products["response"].clone();
+    explicit_null_response["order"]["products"] = serde_json::Value::Null;
+    let explicit_null_invoice: Invoice = serde_json::from_value(explicit_null_response).unwrap();
+    assert!(explicit_null_invoice.order.products.is_none());
+
+    let requests = server.raw_requests().await;
+    let sent_legacy = request_body(&requests[0]);
+    assert_eq!(&sent_legacy, legacy_body);
+    assert!(!sent_legacy.as_object().unwrap().contains_key("products"));
 }
 
 async fn read_request(socket: &mut tokio::net::TcpStream) -> String {

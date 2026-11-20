@@ -4,6 +4,14 @@ All notable changes to the official Paymos Rust SDK are documented here.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-20
+
+- feat(sdk)!: release Rust SDK 2.0.0 with invoice products support
+- refactor(checkout): remove product images from invoice products
+- docs(sdk,drupal): document invoice products[] and update OpenAPI snapshot
+- feat(sdk): bump Rust SDK to 2.0.0 with invoice products (8.1)
+- feat(sdk): add products wire conformance fixtures (7.1)
+
 ## [1.5.1] - 2026-11-13
 
 - fix(plugins,publicweb): SDK webhook credit recipes, CMS recovery, redirects and CSP logs (audit 2026-11-13)

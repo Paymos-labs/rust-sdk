@@ -1133,6 +1133,169 @@
           }
         ]
       }
+    },
+    "invoices": {
+      "authentication": "Payment key with verified HMAC",
+      "create_single_product": {
+        "method": "POST",
+        "path": "/v1/invoices",
+        "body": {
+          "project_id": "prj_1",
+          "amount": "47.00",
+          "currency": "USD",
+          "external_order_id": "order-product-single",
+          "products": [
+            {
+              "title": "Studio Pro",
+              "description": "One-month access",
+              "quantity": 2,
+              "unit_amount": "24.50"
+            }
+          ]
+        },
+        "response": {
+          "invoice_id": "inv_prod_1",
+          "project_id": "prj_1",
+          "status": "awaiting_client",
+          "is_final": false,
+          "is_test": true,
+          "payment_url": "https://pay.paymos.io/i/inv_prod_1",
+          "order": {
+            "external_id": "order-product-single",
+            "amount": "47.00",
+            "currency": "USD",
+            "products": [
+              {
+                "title": "Studio Pro",
+                "description": "One-month access",
+                "quantity": 2,
+                "unit_amount": "24.50"
+              }
+            ]
+          },
+          "created_at": 1700000000,
+          "updated_at": 1700000000
+        }
+      },
+      "create_multi_product": {
+        "method": "POST",
+        "path": "/v1/invoices",
+        "body": {
+          "project_id": "prj_1",
+          "amount": "59.00",
+          "currency": "USD",
+          "external_order_id": "order-product-multi",
+          "products": [
+            {
+              "title": "Studio Pro",
+              "description": "One-month access",
+              "quantity": 2,
+              "unit_amount": "24.50"
+            },
+            {
+              "title": "Priority Support",
+              "quantity": 1,
+              "unit_amount": "12.00"
+            }
+          ]
+        },
+        "response": {
+          "invoice_id": "inv_prod_2",
+          "project_id": "prj_1",
+          "status": "awaiting_client",
+          "is_final": false,
+          "is_test": true,
+          "payment_url": "https://pay.paymos.io/i/inv_prod_2",
+          "order": {
+            "external_id": "order-product-multi",
+            "amount": "59.00",
+            "currency": "USD",
+            "products": [
+              {
+                "title": "Studio Pro",
+                "description": "One-month access",
+                "quantity": 2,
+                "unit_amount": "24.50"
+              },
+              {
+                "title": "Priority Support",
+                "quantity": 1,
+                "unit_amount": "12.00"
+              }
+            ]
+          },
+          "created_at": 1700000000,
+          "updated_at": 1700000000
+        }
+      },
+      "legacy_without_products": {
+        "method": "POST",
+        "path": "/v1/invoices",
+        "body": {
+          "project_id": "prj_1",
+          "amount": "30.00",
+          "currency": "USD",
+          "external_order_id": "order-legacy-1"
+        },
+        "response": {
+          "invoice_id": "inv_legacy_1",
+          "project_id": "prj_1",
+          "status": "awaiting_client",
+          "is_final": false,
+          "is_test": true,
+          "payment_url": "https://pay.paymos.io/i/inv_legacy_1",
+          "order": {
+            "external_id": "order-legacy-1",
+            "amount": "30.00",
+            "currency": "USD"
+          },
+          "created_at": 1700000000,
+          "updated_at": 1700000000
+        }
+      },
+      "null_products": {
+        "method": "POST",
+        "path": "/v1/invoices",
+        "body": {
+          "project_id": "prj_1",
+          "amount": "30.00",
+          "currency": "USD",
+          "external_order_id": "order-null-products-1",
+          "products": null
+        },
+        "response": {
+          "invoice_id": "inv_null_1",
+          "project_id": "prj_1",
+          "status": "awaiting_client",
+          "is_final": false,
+          "is_test": true,
+          "payment_url": "https://pay.paymos.io/i/inv_null_1",
+          "order": {
+            "external_id": "order-null-products-1",
+            "amount": "30.00",
+            "currency": "USD"
+          },
+          "created_at": 1700000000,
+          "updated_at": 1700000000
+        }
+      },
+      "products_wire": {
+        "min_items": 1,
+        "max_items": 50,
+        "required_item_fields": [
+          "title",
+          "quantity",
+          "unit_amount"
+        ],
+        "optional_item_fields": [
+          "description"
+        ],
+        "omit_null_optional_item_fields": true,
+        "quantity_type": "integer",
+        "unit_amount_type": "decimal string",
+        "amount_independent_of_products_sum": true,
+        "excluded_from_webhooks": true
+      }
     }
   }
 }
